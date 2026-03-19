@@ -1,0 +1,214 @@
+{% extends 'base.html' %}
+
+{% block title %}NAS Assistant{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 800px; margin: 0 auto;">
+    <h2 class="card-title">NAS Assistant (Powered by NAS-GPT2)</h2>
+
+    <div style="margin-bottom: 20px;">
+        <label for="tag">Task Category</label>
+        <select id="tag"
+            style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-color); color: var(--text-primary); padding: 12px; width: 100%; border-radius: 6px; box-sizing: border-box; margin-bottom: 15px;">
+            <option value="SAMBA">SAMBA (File Sharing)</option>
+            <option value="RAID">RAID (Storage Arrays)</option>
+            <option value="NFS">NFS (Network Mounts)</option>
+            <option value="PERMISSION">PERMISSION (Access Rights)</option>
+            <option value="SERVICE">SERVICE (System Services)</option>
+        </select>
+
+        <label for="taskDesc"
+            style="color: var(--accent-cyan); font-weight: bold; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 1px;">Task
+            Description</label>
+        <input type="text" id="taskDesc" placeholder="e.g. Create a Samba share at /mnt/media for user pi"
+            value="Create a Samba share at /mnt/media for user pi"
+            style="font-size: 1.1rem; padding: 15px; border: 1px solid var(--accent-purple); box-shadow: inset 0 0 10px rgba(176, 38, 255, 0.2);">
+
+        <div style="margin-top: 15px; margin-bottom: 25px;">
+            <strong
+                style="color: var(--accent-yellow); text-transform: uppercase; font-size: 0.9rem; letter-spacing: 1px; display: block; margin-bottom: 8px;">Neural
+                Link Quick Prompts:</strong>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <!-- SAMBA -->
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SAMBA', 'Create a read-write Samba share at /srv/public for user backup'); return false;">Create
+                    Samba</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SAMBA', 'Create a read-only Samba share at /mnt/storage'); return false;">Read-only
+                    SMB</a>
+
+                <!-- RAID -->
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('RAID', 'Mount a disk with UUID UUID=1342-ABCD to /mnt/storage'); return false;">Mount
+                    Disk UUID</a>
+
+                <!-- NFS -->
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('NFS', 'Mount an NFS share at boot using /etc/fstab from 192.168.1.5:/media to /mnt/nfs'); return false;">Mount
+                    NFS</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('NFS', 'Export /srv/nfs_share to the local network 192.168.1.0/24 with read-write access'); return false;">Export
+                    NFS</a>
+
+                <!-- PERMISSION -->
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('PERMISSION', 'Fix permission denied errors on /mnt/backup for user media'); return false;">Fix
+                    Permissions</a>
+
+                <!-- SERVICE -->
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SERVICE', 'Check the logs for the ssh service using journalctl'); return false;">Check
+                    SSH</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SERVICE', 'Enable and start the ssh service'); return false;">Start SSH</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SERVICE', 'Restart the ssh service to apply new configuration'); return false;">Restart
+                    SSH</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SERVICE', 'Stop and disable the apache2 service so it doesn\'t start at boot'); return false;">Disable
+                    Apache2</a>
+                <a href="#" class="prompt-pill"
+                    onclick="setPrompt('SERVICE', 'Reload the systemd manager configuration after editing a service file'); return false;">Daemon
+                    Reload</a>
+            </div>
+        </div>
+
+        <button onclick="generateCommand()"
+            style="margin-top: 10px; font-weight: bold; font-size: 1.1rem; padding: 15px; border-width: 2px;">Generate
+            Command Sequence</button>
+    </div>
+
+    <style>
+        .prompt-pill {
+            background: rgba(15, 240, 252, 0.1);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .prompt-pill:hover {
+            background: var(--accent-cyan);
+            color: black;
+            box-shadow: 0 0 10px var(--accent-cyan);
+            text-shadow: none;
+        }
+    </style>
+
+    <div id="outputContainer" style="display: none; margin-top: 20px;">
+        <h3 style="color: var(--accent-cyan); margin-bottom: 10px;">Generated Command:</h3>
+        <div id="output"
+            style="padding: 15px; background: rgba(0,0,0,0.3); border-left: 4px solid var(--accent-purple); border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all; min-height: 60px;">
+        </div>
+
+        <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button onclick="copyToClipboard()"
+                style="flex: 1; border-color: var(--text-secondary); color: var(--text-secondary);">Copy to
+                Clipboard</button>
+            <button onclick="executeCommand()"
+                style="flex: 1; border-color: var(--accent-red); color: var(--accent-red);">Execute on Server
+                (Danger)</button>
+        </div>
+
+        <div id="terminalContainer" style="display: none; margin-top: 20px;">
+            <h4 style="color: var(--accent-red); margin-bottom: 5px;">Server Terminal Output:</h4>
+            <div id="terminalOutput"
+                style="padding: 15px; background: #000; color: #0f0; border: 1px solid #333; border-radius: 4px; font-family: monospace; white-space: pre-wrap; word-break: break-all; min-height: 100px; max-height: 400px; overflow-y: auto;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function setPrompt(tagValue, taskDesc) {
+        document.getElementById('tag').value = tagValue;
+        document.getElementById('taskDesc').value = taskDesc;
+    }
+
+    async function generateCommand() {
+        const tag = document.getElementById('tag').value;
+        const task = document.getElementById('taskDesc').value.trim();
+        const outputDiv = document.getElementById('output');
+        const container = document.getElementById('outputContainer');
+
+        if (!task) {
+            alert("Please enter a task description.");
+            return;
+        }
+
+        container.style.display = "block";
+        outputDiv.style.opacity = "0.5";
+        outputDiv.textContent = "Thinking...";
+
+        try {
+            const response = await fetch('/api/assistant/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tag, task })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                outputDiv.textContent = data.response;
+            } else {
+                outputDiv.textContent = `Error: ${data.error || 'Failed to generate response'}`;
+            }
+        } catch (error) {
+            outputDiv.textContent = `Connection Error: ${error.message}`;
+        } finally {
+            outputDiv.style.opacity = "1";
+        }
+    }
+
+    async function executeCommand() {
+        const command = document.getElementById('output').textContent.trim();
+        const terminalDiv = document.getElementById('terminalOutput');
+        const termContainer = document.getElementById('terminalContainer');
+
+        if (!command || command === 'Thinking...' || command.startsWith('Error:')) {
+            alert("No valid command generated to execute.");
+            return;
+        }
+
+        if (!confirm(`Are you SURE you want to execute this command on the server?\n\n${command}`)) {
+            return;
+        }
+
+        termContainer.style.display = "block";
+        terminalDiv.style.opacity = "0.5";
+        terminalDiv.textContent = "Executing...\n$ " + command + "\n";
+
+        try {
+            const response = await fetch('/api/assistant/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ command })
+            });
+
+            const data = await response.json();
+
+            terminalDiv.style.opacity = "1";
+            if (response.ok) {
+                terminalDiv.textContent += "\n" + data.output;
+            } else {
+                terminalDiv.textContent += `\nError: ${data.output || 'Execution failed'}`;
+            }
+        } catch (error) {
+            terminalDiv.style.opacity = "1";
+            terminalDiv.textContent += `\nConnection Error: ${error.message}`;
+        }
+    }
+
+    function copyToClipboard() {
+        const text = document.getElementById('output').textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            alert("Copied to clipboard!");
+        });
+    }
+</script>
+{% endblock %}

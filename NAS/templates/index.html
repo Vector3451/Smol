@@ -1,0 +1,222 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">System Overview</h2>
+    <div class="stat-grid">
+        <!-- CPU -->
+        <div class="stat-item">
+            <div class="stat-label">CPU Load</div>
+            <div class="stat-value">{{ sys_stats.cpu_percent }}%</div>
+            <div style="height: 6px; background: #333; margin-top: 10px; border-radius: 3px; overflow: hidden;">
+                <div class="cpu-bar bg-cyan" data-width="{{ sys_stats.cpu_percent }}" style="height: 100%; width: 0%;">
+                </div>
+            </div>
+        </div>
+
+        <!-- RAM -->
+        <div class="stat-item">
+            <div class="stat-label">Memory</div>
+            <div class="stat-value">{{ sys_stats.ram_percent }}%</div>
+            <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 5px;">
+                {{ sys_stats.ram_used }} / {{ sys_stats.ram_total }}
+            </div>
+            <div style="height: 6px; background: #333; margin-top: 10px; border-radius: 3px; overflow: hidden;">
+                <div class="ram-bar bg-purple" data-width="{{ sys_stats.ram_percent }}"
+                    style="height: 100%; width: 0%;"></div>
+            </div>
+        </div>
+
+        <!-- Temp -->
+        <div class="stat-item">
+            <div class="stat-label">Temperature</div>
+            <div class="stat-value {{ 'text-red' if sys_stats.temp_warning else 'text-green' }}">
+                {{ sys_stats.temp_c }}°C
+            </div>
+            {% if sys_stats.temp_warning %}
+            <div style="color: var(--accent-red); font-size: 0.8rem;">High Temp Warning!</div>
+            {% else %}
+            <div style="color: var(--text-secondary); font-size: 0.8rem;">Optimal</div>
+            {% endif %}
+        </div>
+
+        <!-- Network -->
+        <div class="stat-item">
+            <div class="stat-label">Network I/O</div>
+            <div style="display: flex; justify-content: space-between; margin-top: 10px;">
+                <div style="text-align: left;">
+                    <span style="display: block; font-size: 0.8rem; color: var(--text-secondary);">TX</span>
+                    <span style="color: var(--accent-cyan);">{{ sys_stats.net_sent }}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="display: block; font-size: 0.8rem; color: var(--text-secondary);">RX</span>
+                    <span style="color: var(--accent-green);">{{ sys_stats.net_recv }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Uptime -->
+        <div class="stat-item">
+            <div class="stat-label">Uptime</div>
+            <div class="stat-value" style="font-size: 1.2rem; margin-top: 10px;">{{ sys_stats.uptime }}</div>
+        </div>
+
+        <!-- Tailscale IP -->
+        <div class="stat-item">
+            <div class="stat-label">Tailscale IP</div>
+            <div class="stat-value text-purple" style="font-size: 1.1rem; margin-top: 10px;">{{ tailscale_ip }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Storage Matrix</h2>
+    {% if disks %}
+    {% for disk in disks %}
+    <div class="stat-grid"
+        style="margin-bottom: 30px; border-bottom: 1px solid var(--border-color); padding-bottom: 20px;">
+        <div class="stat-item" style="grid-column: 1 / -1; text-align: left; background: transparent; padding-left: 0;">
+            <span style="color: var(--accent-cyan); font-weight: bold; font-size: 1.1rem;">{{ disk.device }}</span>
+            <span style="color: var(--text-secondary);">mounted at</span>
+            <span style="font-family: monospace;">{{ disk.mountpoint }}</span>
+            <span style="float: right; color: var(--text-secondary);">{{ disk.fstype }}</span>
+        </div>
+
+        <div class="stat-item">
+            <span class="stat-label">Total</span>
+            <span class="stat-value">{{ disk.total_str }}</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Used</span>
+            <span class="stat-value">{{ disk.used_str }}</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Free</span>
+            <span class="stat-value">{{ disk.free_str }}</span>
+        </div>
+        <div class="stat-item">
+            <div class="stat-label">Usage</div>
+            <!-- Using data-percent to avoid linter errors with Jinja in style tags -->
+            <div style="height: 10px; background: #333; margin-top: 10px; border-radius: 5px; overflow: hidden;">
+                <div class="usage-bar" data-percent="{{ disk.percent_int }}"
+                    style="height: 100%; background: var(--accent-cyan); box-shadow: 0 0 10px var(--accent-cyan); width: 0%;">
+                </div>
+            </div>
+            <span style="display: block; margin-top: 5px; color: var(--text-secondary);">{{ disk.percent_int }}%</span>
+        </div>
+    </div>
+    {% endfor %}
+
+    <script>
+        // Set widths dynamically to avoid inline style linter errors
+        document.querySelectorAll('.usage-bar, .cpu-bar, .ram-bar').forEach(function (bar) {
+            var w = bar.getAttribute('data-percent') || bar.getAttribute('data-width');
+            if (w) bar.style.width = w + '%';
+        });
+
+        // Real-time stats update (polling every 3 seconds)
+        setInterval(function () {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const stats = data.system;
+
+                    // Update CPU
+                    document.querySelector('.stat-item:nth-child(1) .stat-value').innerText = stats.cpu_percent + '%';
+                    document.querySelector('.cpu-bar').style.width = stats.cpu_percent + '%';
+
+                    // Update RAM
+                    document.querySelector('.stat-item:nth-child(2) .stat-value').innerText = stats.ram_percent + '%';
+                    let ramText = document.querySelector('.stat-item:nth-child(2) div:nth-child(3)');
+                    if (ramText) ramText.innerText = stats.ram_used + ' / ' + stats.ram_total;
+                    document.querySelector('.ram-bar').style.width = stats.ram_percent + '%';
+
+                    // Update Temp
+                    let tempValue = document.querySelector('.stat-item:nth-child(3) .stat-value');
+                    tempValue.innerText = stats.temp_c + '°C';
+                    if (stats.temp_warning) {
+                        tempValue.className = 'stat-value text-red';
+                    } else {
+                        tempValue.className = 'stat-value text-green';
+                    }
+
+                    // Update Network
+                    // This structure is tricky to target by nth-child robustly but let's try
+                    let netContainer = document.querySelector('.stat-item:nth-child(4) > div');
+                    if (netContainer) {
+                        netContainer.querySelector('div:first-child span:last-child').innerText = stats.net_sent;
+                        netContainer.querySelector('div:last-child span:last-child').innerText = stats.net_recv;
+                    }
+
+                    // Update Uptime
+                    document.querySelector('.stat-item:nth-child(5) .stat-value').innerText = stats.uptime;
+                })
+                .catch(err => console.error('Error fetching stats:', err));
+        }, 1250); // 1.25s for "real-time" feel without thrashing
+
+    </script>
+    {% else %}
+    <p style="text-align: center; color: var(--text-secondary);">No storage devices detected.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 class="card-title">Active Connections</h2>
+    {% if samba and samba.sessions %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>IP Address</th>
+                    <th>Protocol</th>
+                    <th>Connected At</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for session in samba.sessions %}
+                <tr>
+                    <td>{{ session.uid }}</td>
+                    <td>{{ session.machine }}</td>
+                    <td>{{ session.protocol }}</td>
+                    <td>{{ session.connected_at if session.connected_at else 'Active' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color: var(--text-secondary); font-style: italic;">No active connections detected.</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2 class="card-title">Locked Shares</h2>
+    {% if samba and samba.shares %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Share Name</th>
+                    <th>Client IP</th>
+                    <th>PID</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for share in samba.shares %}
+                <tr>
+                    <td>{{ share.service }}</td>
+                    <td>{{ share.machine }}</td>
+                    <td>{{ share.pid }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p style="color: var(--text-secondary); font-style: italic;">No active locks.</p>
+    {% endif %}
+</div>
+{% endblock %}

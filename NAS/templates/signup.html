@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CYBER.NAS // REGISTER</title>
+    <!-- Inline CSS for Reliability -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap');
+
+        :root {
+            --bg-color: #05050b;
+            --card-bg: rgba(10, 10, 20, 0.7);
+            --text-primary: #e0e6ed;
+            --text-secondary: #0ff0fc;
+            --accent-cyan: #0ff0fc;
+            --accent-purple: #b026ff;
+            --accent-pink: #ff007f;
+            --accent-green: #39ff14;
+            --accent-red: #ff3333;
+            --accent-yellow: #fcee0a;
+            --border-color: rgba(15, 240, 252, 0.2);
+            --glow-shadow: 0 0 20px rgba(15, 240, 252, 0.5);
+            --font-stack: 'Rajdhani', 'Segoe UI', Tahoma, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image:
+                linear-gradient(rgba(15, 240, 252, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15, 240, 252, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+            background-position: center center;
+            color: var(--text-primary);
+            font-family: var(--font-stack);
+            font-size: 1.1rem;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            overflow-x: hidden;
+            text-transform: uppercase;
+        }
+
+        .login-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .login-card {
+            width: 100%;
+            max-width: 400px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(15, 240, 252, 0.05);
+            backdrop-filter: blur(12px);
+            position: relative;
+        }
+
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+            opacity: 0.5;
+        }
+
+        .login-card:hover {
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9), inset 0 0 20px rgba(15, 240, 252, 0.15), var(--glow-shadow);
+            border-color: var(--accent-cyan);
+            transform: translateY(-2px);
+            transition: all 0.3s ease;
+        }
+
+        .brand {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px var(--accent-cyan), 0 0 30px var(--accent-pink);
+            text-align: center;
+            margin-bottom: 30px;
+            position: relative;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 12px;
+            width: 100%;
+            border-radius: 2px;
+            box-sizing: border-box;
+            margin-bottom: 20px;
+            font-family: monospace;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent-pink);
+            box-shadow: 0 0 15px rgba(255, 0, 127, 0.3);
+            background: rgba(255, 0, 127, 0.05);
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--accent-cyan);
+            font-weight: 600;
+            letter-spacing: 1px;
+            font-size: 0.9rem;
+        }
+
+        button {
+            background: rgba(15, 240, 252, 0.1);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 12px 20px;
+            border-radius: 2px;
+            cursor: pointer;
+            font-weight: 700;
+            font-family: var(--font-stack);
+            font-size: 1.2rem;
+            transition: all 0.3s;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            width: 100%;
+            box-shadow: inset 0 0 10px rgba(15, 240, 252, 0.2);
+        }
+
+        button:hover {
+            background: var(--accent-cyan);
+            color: var(--bg-color);
+            box-shadow: 0 0 20px var(--accent-cyan);
+            transform: translateY(-2px);
+        }
+
+        .flash {
+            padding: 15px;
+            background: rgba(0, 255, 0, 0.1);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+    </style>
+
+</head>
+
+<body>
+    <div class="container login-container">
+        <div class="card login-card">
+            <div class="brand" style="text-align: center; margin-bottom: 30px;">Cyber.NAS // REGISTER</div>
+
+            {% with messages = get_flashed_messages() %}
+            {% if messages %}
+            <div class="flash">
+                {% for message in messages %}
+                <div>{{ message }}</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% endwith %}
+
+            <form method="POST">
+                <div>
+                    <label for="username">NEW IDENTITY</label>
+                    <input type="text" id="username" name="username" required autofocus placeholder="Choose Username">
+                </div>
+                <div>
+                    <label for="password">NEW ACCESS KEY</label>
+                    <input type="password" id="password" name="password" required placeholder="Choose Password">
+                </div>
+                <button type="submit">Establish Connection</button>
+            </form>
+
+            <div style="margin-top: 20px; text-align: center;">
+                <a href="{{ url_for('login') }}"
+                    style="color: var(--text-secondary); text-decoration: none; font-size: 0.9rem;">&larr; Return to
+                    Initialization</a>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

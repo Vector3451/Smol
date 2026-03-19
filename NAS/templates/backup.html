@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+
+{% block title %}Backup Operations{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">One-Time Backup (Rsync)</h2>
+    <form action="{{ url_for('run_backup') }}" method="POST">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <label>Source Path</label>
+                <input type="text" name="source" placeholder="/srv/nas/important_data" required>
+            </div>
+
+            <div>
+                <label>Destination Path</label>
+                <input type="text" name="dest" placeholder="/mnt/external_drive/backup" required>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <label style="display: flex; align-items: center; cursor: pointer;">
+                <input type="checkbox" name="dry_run" value="yes" style="width: auto; margin-right: 10px;">
+                Dry Run (Simulate only)
+            </label>
+        </div>
+
+        <div style="margin-top: 20px;">
+            <button type="submit" style="color: var(--accent-purple); border-color: var(--accent-purple);">Execute Sync
+                Strategy</button>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Backup History</h2>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Status</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in history %}
+                <tr>
+                    <td>{{ job.time }}</td>
+                    <td>
+                        {% if job.status == 'Success' %}
+                        <span style="color: var(--accent-green);">Success</span>
+                        {% else %}
+                        <span style="color: var(--accent-red);">Failed</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ job.details }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

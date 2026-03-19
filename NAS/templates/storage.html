@@ -1,0 +1,164 @@
+{% extends 'base.html' %}
+
+{% block title %}Storage Management{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">Disks & Partitions</h2>
+
+    {% if disks %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Device</th>
+                    <th>Model</th>
+                    <th>Size</th>
+                    <th>Type</th>
+                    <th>Filesystem</th>
+                    <th>Mount Point</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for disk in disks %}
+                <!-- Parent Disk -->
+                <tr style="background: rgba(255, 255, 255, 0.05); font-weight: bold;">
+                    <td>
+                        <span style="color: var(--accent-cyan);">{{ disk.name }}</span>
+                    </td>
+                    <td>{{ disk.model }}</td>
+                    <td>{{ disk.size }}</td>
+                    <td>DISK</td>
+                    <td>{{ disk.fstype }}</td>
+                    <td>{{ disk.mountpoint if disk.mountpoint else '-' }}</td>
+                    <td>
+                        {% if not disk.children and not disk.mountpoint %}
+                        <!-- Allow formatting whole raw disk only if no partitions? Or just show format dialog -->
+                        <button onclick="openFormatModal('{{ disk.name }}')"
+                            style="padding: 5px 10px; font-size: 0.8rem;">Format</button>
+                        {% endif %}
+                    </td>
+                </tr>
+
+                <!-- Partitions -->
+                {% if disk.children %}
+                {% for part in disk.children %}
+                <tr>
+                    <td style="padding-left: 40px;">
+                        <span style="color: var(--text-secondary);">└─ </span>
+                        {{ part.name }}
+                    </td>
+                    <td></td>
+                    <td>{{ part.size }}</td>
+                    <td>PART</td>
+                    <td>{{ part.fstype }}</td>
+                    <td>
+                        {% if part.mountpoint %}
+                        <span style="color: var(--accent-green);">{{ part.mountpoint }}</span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">Not Mounted</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div style="display: flex; gap: 10px;">
+                            {% if part.mountpoint %}
+                            <form action="{{ url_for('unmount_disk') }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="device" value="{{ part.name }}">
+                                <button type="submit" class="btn-danger"
+                                    style="padding: 5px 10px; font-size: 0.8rem;">Unmount</button>
+                            </form>
+                            {% else %}
+                            <button onclick="openMountModal('{{ part.name }}')"
+                                style="padding: 5px 10px; font-size: 0.8rem;">Mount</button>
+                            <button onclick="openFormatModal('{{ part.name }}')" class="btn-danger"
+                                style="padding: 5px 10px; font-size: 0.8rem;">Format</button>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% endif %}
+
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p>No storage devices found (or permission denied).</p>
+    {% endif %}
+</div>
+
+<!-- Mount Modal -->
+<div id="mountModal"
+    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000;">
+    <div
+        style="background:var(--card-bg); width:400px; margin: 100px auto; padding:20px; border-radius:12px; border:1px solid var(--accent-cyan);">
+        <h3 style="margin-top:0;">Mount Partition</h3>
+        <form action="{{ url_for('mount_disk') }}" method="POST">
+            <input type="hidden" id="mountDevice" name="device">
+
+            <label>Partition</label>
+            <input type="text" id="mountDeviceDisplay" disabled>
+
+            <label>Mount Point (e.g., /srv/nas/data)</label>
+            <input type="text" name="mountpoint" placeholder="/srv/nas/data" required>
+
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button type="button" onclick="closeModal('mountModal')"
+                    style="border-color:var(--text-secondary); color:var(--text-secondary);">Cancel</button>
+                <button type="submit">Mount</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Format Modal -->
+<div id="formatModal"
+    style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000;">
+    <div
+        style="background:var(--card-bg); width:400px; margin: 100px auto; padding:20px; border-radius:12px; border:1px solid var(--accent-red);">
+        <h3 style="margin-top:0; color:var(--accent-red);">Format Disk (Danger!)</h3>
+        <p>This will ERASE ALL DATA on <span id="formatDeviceDisplay" style="font-weight:bold;"></span>.</p>
+
+        <form action="{{ url_for('format_disk') }}" method="POST">
+            <input type="hidden" id="formatDevice" name="device">
+
+            <label>File System</label>
+            <select name="fstype"
+                style="background:rgba(0,0,0,0.2); color:white; padding:10px; width:100%; margin-bottom:15px; border:1px solid var(--border-color); border-radius:6px;">
+                <option value="ext4">ext4 (Linux Default)</option>
+                <option value="ntfs">NTFS (Windows Compatible)</option>
+                <option value="vfat">FAT32 (Legacy)</option>
+            </select>
+
+            <label>Label</label>
+            <input type="text" name="label" placeholder="NAS_DATA" required>
+
+            <div style="display:flex; gap:10px; margin-top:20px;">
+                <button type="button" onclick="closeModal('formatModal')"
+                    style="border-color:var(--text-secondary); color:var(--text-secondary);">Cancel</button>
+                <button type="submit" class="btn-danger">ERASE & FORMAT</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    function openMountModal(device) {
+        document.getElementById('mountDevice').value = device;
+        document.getElementById('mountDeviceDisplay').value = '/dev/' + device;
+        document.getElementById('mountModal').style.display = 'block';
+    }
+
+    function openFormatModal(device) {
+        document.getElementById('formatDevice').value = device;
+        document.getElementById('formatDeviceDisplay').innerText = '/dev/' + device;
+        document.getElementById('formatModal').style.display = 'block';
+    }
+
+    function closeModal(id) {
+        document.getElementById(id).style.display = 'none';
+    }
+</script>
+{% endblock %}
