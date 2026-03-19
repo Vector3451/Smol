@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+
+{% block title %}Global Settings{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2 class="card-title">Samba Global Configuration</h2>
+    <form action="{{ url_for('update_samba_global') }}" method="POST">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <label>Workgroup</label>
+                <input type="text" name="workgroup" value="{{ config.get('workgroup', 'WORKGROUP') }}" required>
+            </div>
+
+            <div>
+                <label>NetBIOS Name</label>
+                <input type="text" name="netbios_name" value="{{ config.get('netbios name', 'RASPBERRYPI') }}">
+            </div>
+
+            <div>
+                <label>Min Protocol</label>
+                <select name="min_protocol"
+                    style="background:rgba(0,0,0,0.2); color:white; padding:10px; width:100%; border:1px solid var(--border-color); border-radius:6px;">
+                    <option value="SMB2" {% if config.get('server min protocol')=='SMB2' %}selected{% endif %}>SMB2
+                        (Secure)</option>
+                    <option value="NT1" {% if config.get('server min protocol')=='NT1' %}selected{% endif %}>NT1
+                        (Legacy/Insecure)</option>
+                </select>
+            </div>
+
+            <div>
+                <label>Max Protocol</label>
+                <select name="max_protocol"
+                    style="background:rgba(0,0,0,0.2); color:white; padding:10px; width:100%; border:1px solid var(--border-color); border-radius:6px;">
+                    <option value="SMB3" {% if config.get('server max protocol')=='SMB3' %}selected{% endif %}>SMB3
+                        (Modern)</option>
+                    <option value="SMB2" {% if config.get('server max protocol')=='SMB2' %}selected{% endif %}>SMB2
+                    </option>
+                </select>
+            </div>
+
+            <div style="grid-column: 1 / -1;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" name="map_to_guest" value="Bad User" style="width: auto; margin-right: 10px;"
+                        {% if config.get('map to guest')=='Bad User' %}checked{% endif %}>
+                    Enable Guest Access (Map to Guest = Bad User)
+                </label>
+                <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 5px;">
+                    Required for password-less share access.
+                </p>
+            </div>
+        </div>
+
+        <div style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+            <button type="submit">Save Global Settings</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

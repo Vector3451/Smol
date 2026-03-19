@@ -1,0 +1,17 @@
+[Unit]
+Description=Custom NAS Web UI
+After=network.target
+
+[Service]
+User=dev
+WorkingDirectory=/home/dev/nas-ui
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+Environment=NAS_USER=dev
+Environment=NAS_PASSWORD=cherrypie
+Environment=SECRET_KEY=supersecretkey_change_me_in_prod
+
+
+[Install]
+WantedBy=multi-user.target

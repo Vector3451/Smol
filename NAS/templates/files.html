@@ -1,0 +1,99 @@
+{% extends 'base.html' %}
+
+{% block title %}File Explorer{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div>
+            <h2 class="card-title" style="margin-bottom: 5px;">Explorer: /{{ current_path }}</h2>
+            <form action="{{ url_for('upload_file') }}" method="POST" enctype="multipart/form-data"
+                style="display: flex; gap: 10px; align-items: center;">
+                <input type="hidden" name="path" value="{{ current_path }}">
+                <input type="file" name="file" style="width: auto; padding: 5px;">
+                <button type="submit" style="padding: 5px 15px; font-size: 0.8rem;">Upload</button>
+            </form>
+        </div>
+
+        {% if parent is not none %}
+        <a href="{{ url_for('files', subpath=parent) if parent else url_for('files') }}"
+            style="border: 1px solid var(--accent-cyan); padding: 5px 15px; border-radius: 4px;">&uarr; Up Level</a>
+        {% endif %}
+    </div>
+
+    {% if error %}
+    <div class="flash"
+        style="border-color: var(--accent-red); color: var(--accent-red); background: rgba(255, 0, 0, 0.1);">
+        ERROR: {{ error }}
+    </div>
+    {% else %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 50px;">Type</th>
+                    <th>Name</th>
+                    <th>Size</th>
+                    <th>Modified</th>
+                    {% if current_user.is_admin %}
+                    <th style="width: 80px; text-align: center;">Admin</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% if not files %}
+                <tr>
+                    <td colspan="{{ 5 if current_user.is_admin else 4 }}"
+                        style="text-align: center; color: var(--text-secondary); padding: 30px;">Directory
+                        is empty.</td>
+                </tr>
+                {% endif %}
+
+                {% for f in files %}
+                <tr>
+                    <td style="font-size: 1.2rem;">
+                        {% if f.is_dir %}
+                        <span style="color: var(--accent-cyan);">📁</span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">📄</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if f.is_dir %}
+                        <a href="{{ url_for('files', subpath=f.path) }}" style="font-weight: bold;">{{ f.name }}</a>
+                        {% else %}
+                        {% set ext = f.name.split('.')[-1].lower() if '.' in f.name else '' %}
+                        {% if ext in ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi'] %}
+                        <a href="{{ url_for('play_video', path=f.path) }}"
+                            style="color: var(--accent-pink); font-weight: bold;">▶️ {{ f.name }}</a>
+                        {% else %}
+                        <a href="{{ url_for('download_file', path=f.path) }}" target="_blank">{{ f.name }}</a>
+                        {% endif %}
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace;">
+                        {% if f.is_dir %}
+                        -
+                        {% else %}
+                        {{ (f.size / 1024 / 1024) | round(2) }} MB
+                        {% endif %}
+                    </td>
+                    <td style="font-family: monospace; color: var(--text-secondary);">{{ f.mtime }}</td>
+                    {% if current_user.is_admin %}
+                    <td style="text-align: center;">
+                        <form action="{{ url_for('delete_file') }}" method="POST" style="display:inline;"
+                            onsubmit="return confirm('WARNING: Are you sure you want to PERMANENTLY delete {{ f.name }}?');">
+                            <input type="hidden" name="path" value="{{ f.path }}">
+                            <button type="submit"
+                                style="background: transparent; color: var(--accent-red); border: 1px solid var(--accent-red); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; cursor: pointer; box-shadow: inset 0 0 5px rgba(255,51,51,0.2);">Delete</button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

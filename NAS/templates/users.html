@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+
+{% block title %}User Protocol{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 class="card-title" style="margin-bottom: 0;">System Users</h2>
+    </div>
+
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>User ID (UID)</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td style="font-weight: bold; color: var(--accent-cyan);">{{ user.username }}</td>
+                    <td>{{ user.uid }}</td>
+                    <td>
+                        <span style="color: var(--accent-green);">Active</span>
+                    </td>
+                    <td>
+                        {% if user.username != 'nasa' and user.username != 'root' and user.username != 'dev' %}
+                        <form action="{{ url_for('delete_user') }}" method="POST"
+                            onsubmit="return confirm('Permanently delete user {{ user.username }} and their home directory?');"
+                            style="display:inline;">
+                            <input type="hidden" name="username" value="{{ user.username }}">
+                            <button type="submit" class="btn-danger"
+                                style="width: auto; padding: 5px 10px; font-size: 0.8rem;">Delete</button>
+                        </form>
+                        {% else %}
+                        <span style="color: var(--text-secondary); font-size: 0.8rem; font-style: italic;">Protected
+                            System User</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card">
+    <h2 class="card-title">Create New User</h2>
+    <form action="{{ url_for('add_user') }}" method="POST">
+        <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 15px; align-items: end;">
+            <div>
+                <label>Username</label>
+                <input type="text" name="username" required placeholder="User">
+            </div>
+            <div>
+                <label>Password</label>
+                <input type="password" name="password" required placeholder="********">
+            </div>
+            <button type="submit" style="height: 45px;">Create User</button>
+        </div>
+        <p style="color: var(--text-secondary); font-size: 0.8rem; margin-top: 10px;">
+            This will create a Linux system user and a Samba user.
+        </p>
+    </form>
+</div>
+{% endblock %}

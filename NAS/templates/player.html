@@ -1,0 +1,22 @@
+{% extends 'base.html' %}
+
+{% block title %}Media Player{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 class="card-title">Playing: {{ filename }}</h2>
+        <a href="{{ url_for('files', subpath=parent) if parent else url_for('files') }}"
+            style="border: 1px solid var(--accent-cyan); padding: 5px 15px; border-radius: 4px;">&uarr; Back to
+            Explorer</a>
+    </div>
+
+    <div style="text-align: center; margin-top: 20px;">
+        <video controls autoplay
+            style="max-width: 100%; max-height: 70vh; border: 1px solid var(--border-color); border-radius: 8px; box-shadow: var(--glow-shadow);">
+            <source src="{{ url_for('stream_file', path=path) }}" type="video/{{ ext }}">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+</div>
+{% endblock %}

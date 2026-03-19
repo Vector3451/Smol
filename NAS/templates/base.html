@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CYBER.NAS // {% block title %}System{% endblock %}</title>
+    <!-- Inline CSS for Reliability -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap');
+
+        :root {
+            --bg-color: #05050b;
+            --card-bg: rgba(10, 10, 20, 0.7);
+            --text-primary: #e0e6ed;
+            --text-secondary: #0ff0fc;
+            --accent-cyan: #0ff0fc;
+            --accent-purple: #b026ff;
+            --accent-pink: #ff007f;
+            --accent-green: #39ff14;
+            --accent-red: #ff3333;
+            --accent-yellow: #fcee0a;
+            --border-color: rgba(15, 240, 252, 0.2);
+            --glow-shadow: 0 0 20px rgba(15, 240, 252, 0.5);
+            --font-stack: 'Rajdhani', 'Segoe UI', Tahoma, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image:
+                linear-gradient(rgba(15, 240, 252, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(15, 240, 252, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+            background-position: center center;
+            color: var(--text-primary);
+            font-family: var(--font-stack);
+            font-size: 1.1rem;
+            margin: 0;
+            padding: 0;
+            line-height: 1.6;
+            overflow-x: hidden;
+            text-transform: uppercase;
+        }
+
+        a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+            transition: all 0.3s ease;
+        }
+
+        a:hover {
+            color: var(--accent-pink);
+            text-shadow: 0 0 8px var(--accent-pink);
+        }
+
+        /* Base Layout */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            margin-bottom: 40px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .brand {
+            font-size: 2.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            text-shadow: 0 0 15px var(--accent-cyan), 0 0 30px var(--accent-pink);
+            position: relative;
+        }
+
+        .brand::after {
+            content: ' ';
+            position: absolute;
+            bottom: -5px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-pink), transparent);
+        }
+
+        nav a {
+            margin-left: 20px;
+            font-size: 0.9rem;
+            padding: 8px 12px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }
+
+        nav a.logout-btn {
+            border-color: var(--border-color);
+            color: var(--text-secondary);
+        }
+
+        nav a.logout-btn:hover {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+            text-shadow: 0 0 5px var(--accent-red);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(15, 240, 252, 0.05);
+            margin-bottom: 30px;
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-cyan), transparent);
+            opacity: 0.5;
+        }
+
+        .card:hover {
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.9), inset 0 0 20px rgba(15, 240, 252, 0.15), var(--glow-shadow);
+            border-color: var(--accent-cyan);
+            transform: translateY(-2px);
+        }
+
+        .card-title {
+            margin-top: 0;
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* Stats */
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+        }
+
+        .stat-value {
+            display: block;
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--accent-cyan);
+            text-shadow: 0 0 15px rgba(15, 240, 252, 0.6);
+            letter-spacing: 2px;
+        }
+
+        .stat-label {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+        }
+
+        /* Tables */
+        .table-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        th {
+            text-align: left;
+            padding: 15px;
+            color: var(--text-secondary);
+            border-bottom: 2px solid var(--border-color);
+            font-weight: normal;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+        }
+
+        td {
+            padding: 15px;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--accent-cyan);
+        }
+
+        /* Forms */
+        input[type="text"],
+        input[type="password"] {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 12px;
+            width: 100%;
+            border-radius: 6px;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        button {
+            background: rgba(15, 240, 252, 0.1);
+            border: 1px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 600;
+            font-family: var(--font-stack);
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            width: 100%;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 10px rgba(15, 240, 252, 0.2);
+        }
+
+        button:hover {
+            background: var(--accent-cyan);
+            color: #000;
+            box-shadow: 0 0 20px var(--accent-cyan), inset 0 0 10px rgba(255, 255, 255, 0.5);
+            text-shadow: none;
+        }
+
+        button.btn-danger {
+            border-color: var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        button.btn-danger:hover {
+            background: var(--accent-red);
+            color: black;
+            box-shadow: 0 0 15px var(--accent-red);
+        }
+
+        .flash {
+            padding: 15px;
+            background: rgba(0, 255, 0, 0.1);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+            border-radius: 6px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .status-pass {
+            color: var(--accent-green);
+            text-shadow: 0 0 5px var(--accent-green);
+        }
+
+        .status-fail {
+            color: var(--accent-red);
+            text-shadow: 0 0 5px var(--accent-red);
+        }
+
+        /* Utility Classes to avoid detailed inline styles */
+        .text-red {
+            color: var(--accent-red) !important;
+            text-shadow: 0 0 5px rgba(255, 51, 51, 0.5);
+        }
+
+        .text-green {
+            color: var(--accent-green) !important;
+            text-shadow: 0 0 5px rgba(57, 255, 20, 0.5);
+        }
+
+        .text-cyan {
+            color: var(--accent-cyan) !important;
+            text-shadow: 0 0 5px rgba(15, 240, 252, 0.5);
+        }
+
+        .text-purple {
+            color: var(--accent-purple) !important;
+            text-shadow: 0 0 5px rgba(176, 38, 255, 0.5);
+        }
+
+        .text-pink {
+            color: var(--accent-pink) !important;
+            text-shadow: 0 0 5px rgba(255, 0, 127, 0.5);
+        }
+
+        .text-secondary {
+            color: var(--text-secondary) !important;
+        }
+
+        .bg-cyan {
+            background-color: var(--accent-cyan) !important;
+            box-shadow: 0 0 8px var(--accent-cyan);
+        }
+
+        .bg-purple {
+            background-color: var(--accent-purple) !important;
+            box-shadow: 0 0 8px var(--accent-purple);
+        }
+
+        .bg-red {
+            background-color: var(--accent-red) !important;
+            box-shadow: 0 0 8px var(--accent-red);
+        }
+
+        .bg-pink {
+            background-color: var(--accent-pink) !important;
+            box-shadow: 0 0 8px var(--accent-pink);
+        }
+    </style>
+
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <div class="brand">Cyber.NAS <span style="font-size: 0.8rem; color: var(--text-secondary);">v2.0</span>
+            </div>
+            <nav style="display: flex; align-items: center;">
+                {% if current_user.is_authenticated %}
+                    {% if current_user.is_admin %}
+                    <a href="{{ url_for('index') }}">Dashboard</a>
+                    <a href="{{ url_for('storage') }}">Storage</a>
+                    <a href="{{ url_for('users') }}">Users</a>
+                    <a href="{{ url_for('shares') }}">Shares</a>
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('backup') }}">Backup</a>
+                    <a href="{{ url_for('health') }}">Diagnostics</a>
+                    <a href="{{ url_for('assistant') }}">Assistant</a>
+                    {% endif %}
+                <a href="{{ url_for('files') }}">Explorer</a>
+                <a href="{{ url_for('logout') }}" class="logout-btn">Disconnect</a>
+                {% endif %}
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="flash">
+            {% for message in messages %}
+            <div>{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <main>
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    <script>
+        // Auto-refresh disabled in favor of dynamic updates.
+    </script>
+</body>
+
+</html>
