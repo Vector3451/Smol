@@ -1,6 +1,6 @@
 # Smol NAS AI
 
-![NAS AI](https://img.shields.io/badge/Model-GPT2-blue) ![Task](https://img.shields.io/badge/Task-NAS%20Commands-green)
+![NAS AI](https://img.shields.io/badge/Model-Smol-blue) ![Task](https://img.shields.io/badge/Task-NAS%20Commands-green)
 
 **Smol** is a specialized language model designed to generate administrative commands for Network Attached Storage (NAS) management. It provides a natural language interface for common server tasks across Samba, NFS, RAID, and system permissions.
 
