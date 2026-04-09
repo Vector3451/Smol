@@ -1005,45 +1005,55 @@ def get_disk_health():
 @app.route('/health')
 @admin_required
 def health():
+    # Page renders instantly — all dynamic data (SMART, services, logs) is
+    # loaded client-side via /api/health/data to avoid blocking subprocess calls.
+    return render_template('health.html')
+
+
+@app.route('/api/health/data')
+@admin_required
+def api_health_data():
+    """Returns SMART disk data, service status, and recent logs as JSON."""
+    # ---- SMART data ----
     smart_data = get_disk_health()
-    
-    # Service Status
-    services = {
-        'smbd': 'stopped',
-        'nmbd': 'stopped',
-        'ssh': 'stopped',
-        'nas-ui': 'running' 
-    }
-    
-    for s in ['smbd', 'nmbd', 'ssh']:
-        success, _ = run_sudo_command(['systemctl', 'is-active', s])
-        # systemctl is-active returns 0 (success) if active, non-zero if inactive
-        # run_sudo_command returns (True, "Success") if check_output succeeds
-        # Actually check_output raises error on non-zero exit unless checked carefully
+
+    # ---- Service Status ----
+    services = {}
+    for s in ['smbd', 'nmbd', 'ssh', 'nas-ui']:
+        if s == 'nas-ui':
+            services[s] = 'active'  # This service IS running (we're serving requests)
+            continue
         try:
-             # run_sudo_command wraps check_output, so if it returns True, it didn't crash.
-             # However, is-active prints 'active' or 'inactive' to stdout.
-             if os.environ.get('NAS_ENV') != 'production':
-                 services[s] = 'active' # Mock
-             else:
-                 out = subprocess.check_output(['systemctl', 'is-active', s], text=True).strip()
-                 services[s] = out
-        except:
-             services[s] = 'inactive'
+            result = subprocess.run(
+                ['systemctl', 'is-active', s],
+                capture_output=True, text=True,
+                stdin=subprocess.DEVNULL, timeout=5
+            )
+            services[s] = result.stdout.strip() or ('active' if result.returncode == 0 else 'inactive')
+        except Exception:
+            services[s] = 'unknown'
 
-    # Logs (Mock/Real)
+    # ---- Recent Logs ----
     logs = []
-    if os.environ.get('NAS_ENV') != 'production':
-        logs = [
-            {'time': '2026-02-10 10:00:01', 'level': 'INFO', 'msg': 'Samba service restarted'},
-            {'time': '2026-02-10 10:05:22', 'level': 'WARN', 'msg': 'Disk /dev/sdb usage > 90%'},
-        ]
-    else:
-        # Read journalctl or syslog?
-        # subprocess.check_output(['journalctl', '-n', '20', '--output=short-iso'])
-        pass
+    try:
+        out = subprocess.check_output(
+            ['journalctl', '-n', '30', '--output=short-iso', '--no-pager'],
+            text=True, stderr=subprocess.DEVNULL, timeout=5
+        )
+        for line in out.splitlines():
+            parts = line.split(None, 4)
+            if len(parts) >= 5:
+                level = 'ERROR' if any(w in line.upper() for w in ['ERROR', 'FAIL', 'CRIT']) else 'INFO'
+                logs.append({'time': parts[0], 'level': level, 'msg': ' '.join(parts[3:])})
+    except Exception:
+        pass  # journalctl not available or no logs yet
 
-    return render_template('health.html', smart=smart_data, services=services, logs=logs)
+    return jsonify({
+        'smart': smart_data,
+        'services': services,
+        'logs': logs
+    })
+
 
 @app.route('/service/<action>/<name>', methods=['POST'])
 @login_required
@@ -1454,15 +1464,13 @@ def execute_command():
     import re
 
     # Parse the AI output into executable shell lines.
-    # The model often outputs: "1. Description: sudo command arg"
-    # Strategy: extract lines that look like shell commands.
     extracted_commands = []
     for line in raw_command.splitlines():
         line = line.strip()
         if not line:
             continue
 
-        # Strip numbering: "1. ", "2) "
+        # Strip leading numbering: "1. ", "2) "
         line = re.sub(r'^\d+[.)\s]+', '', line).strip()
 
         # Strip descriptive prefix before a sudo/systemctl command:
@@ -1473,10 +1481,9 @@ def execute_command():
 
         # Inject prerequisite for sshd config test
         if 'sshd' in line and '-t' in line:
-            extracted_commands.append('sudo mkdir -p /run/sshd')
+            extracted_commands.append('sudo -n mkdir -p /run/sshd')
 
-        # Accept any line that starts with a known shell token or looks like a command
-        # Reject lines that are clearly prose (no lowercase command token at start)
+        # Accept any line that starts with a known shell token or looks like a valid command
         SHELL_PREFIXES = (
             'sudo ', 'systemctl ', 'ls ', 'cat ', 'chmod ', 'chown ',
             'mkdir ', 'smbstatus ', 'smbpasswd ', 'useradd ', 'userdel ',
@@ -1495,25 +1502,45 @@ def execute_command():
             extracted_commands.append(line)
 
     if not extracted_commands:
-        # Nothing parseable — run the raw command as-is (user copy-pasted a real command)
+        # Nothing parseable — run the raw text as-is
         final_script = raw_command.strip()
     else:
         final_script = ' && '.join(extracted_commands)
 
+    # CRITICAL: Replace plain 'sudo ' with 'sudo -n ' throughout the script.
+    # Plain sudo without -n will try to open /dev/tty for a password prompt.
+    # Since this runs as a subprocess with no TTY, stdout/stderr stay empty
+    # and the command silently fails. sudo -n fails immediately with a clear message.
+    final_script = re.sub(r'\bsudo(?!\s+-n)\s+', 'sudo -n ', final_script)
+
     try:
         result = subprocess.run(
             final_script, shell=True,
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=120
         )
 
         stdout = result.stdout or ''
         stderr = result.stderr or ''
-        output = stdout
-        if stderr:
-            output = (output + '\n' + stderr).strip() if output else stderr
 
-        if not output.strip() and result.returncode == 0:
-            output = '(Command completed with no output — exit code 0)'
+        # Combine stdout + stderr for full terminal-like output
+        if stdout and stderr:
+            output = stdout.rstrip() + '\n\n[stderr]\n' + stderr.strip()
+        elif stdout:
+            output = stdout
+        elif stderr:
+            output = stderr
+        else:
+            # Both empty — common when sudo /dev/tty write is blocked
+            if result.returncode != 0:
+                output = (
+                    f'Command exited with code {result.returncode} and produced no output.\n'
+                    f'If this is a sudo command, ensure NOPASSWD is configured in /etc/sudoers:\n'
+                    f'  vboxuser ALL=(ALL) NOPASSWD: ALL'
+                )
+            else:
+                output = '(Command completed successfully with no output — exit code 0)'
 
         return jsonify({
             'status': 'success' if result.returncode == 0 else 'error',
