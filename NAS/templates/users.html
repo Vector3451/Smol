@@ -27,7 +27,7 @@
                         <span style="color: var(--accent-green);">Active</span>
                     </td>
                     <td>
-                        {% if user.username != 'nasa' and user.username != 'root' and user.username != 'dev' %}
+                    {% if user.username != nas_admin and user.username != 'root' and user.username != 'nobody' %}
                         <form action="{{ url_for('delete_user') }}" method="POST"
                             onsubmit="return confirm('Permanently delete user {{ user.username }} and their home directory?');"
                             style="display:inline;">

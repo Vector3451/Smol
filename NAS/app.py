@@ -466,7 +466,8 @@ def signup():
 @admin_required
 def users():
     users = get_system_users()
-    return render_template('users.html', users=users)
+    nas_admin = os.environ.get('NAS_USER', 'dev')
+    return render_template('users.html', users=users, nas_admin=nas_admin)
 
 @app.route('/users/add', methods=['POST'])
 @admin_required
@@ -516,19 +517,27 @@ def add_user():
 @admin_required
 def delete_user():
     username = request.form.get('username')
-    
-    if username == 'dev':
-        flash("Cannot delete the main admin user 'dev'.")
+
+    if not username:
+        flash("No username provided.")
         return redirect(url_for('users'))
-        
-    # sudo userdel -r <username>
+
+    # Protect system-critical accounts
+    NAS_ADMIN = os.environ.get('NAS_USER', 'dev')
+    protected = {NAS_ADMIN, 'root', 'nobody'}
+    if username in protected:
+        flash(f"Cannot delete protected system account '{username}'.")
+        return redirect(url_for('users'))
+
+    # 1. Remove Samba user first (non-fatal if it fails)
+    run_sudo_command(['sudo', 'smbpasswd', '-x', username])
+
+    # 2. Delete Linux user and their home directory
     success, msg = run_sudo_command(['sudo', 'userdel', '-r', username])
     if success:
-        flash(f"User {username} deleted.")
+        flash(f"User '{username}' deleted successfully.")
     else:
         flash(f"Error deleting user: {msg}")
-        
-    return redirect(url_for('users'))
 
     return redirect(url_for('users'))
 
@@ -898,49 +907,73 @@ def update_samba_global():
 
 def get_disk_health():
     """
-    Finds the device mounted at /srv/nas and runs smartctl.
+    Finds the primary storage device and runs smartctl in production.
+    Falls back to real psutil data with placeholder SMART fields in dev.
     """
+    # Try to find the /srv/nas device, then fall back to root partition
     device = None
     try:
         partitions = psutil.disk_partitions()
         for p in partitions:
-            if p.mountpoint == '/srv/nas':
+            if p.mountpoint in ('/srv/nas', '/'):
                 device = p.device
-                break
+                if p.mountpoint == '/srv/nas':
+                    break  # Prefer /srv/nas if found
     except Exception:
         pass
 
-    if not device:
-        # Fallback for dev env
-        device = '/dev/sda1'
+    raw_device = '/dev/sda'  # final fallback
+    if device:
+        # Strip partition number: /dev/sda1 -> /dev/sda, /dev/mmcblk0p1 -> /dev/mmcblk0
+        import re
+        raw_device = re.sub(r'p?\d+$', '', device)
 
-    # Clean device path (remove partition number roughly for smartctl)
-    # real smartctl usually checks the valid block device e.g. /dev/sda
-    # logic: /dev/sda1 -> /dev/sda
-    raw_device = device.rstrip('0123456789')
-    
-    mock_smart_data = {
+    # In production: try to run real smartctl
+    if os.environ.get('NAS_ENV') == 'production':
+        try:
+            out = subprocess.check_output(
+                ['sudo', 'smartctl', '-H', '-i', '-A', '-j', raw_device],
+                text=True, stderr=subprocess.DEVNULL, timeout=10
+            )
+            data = json.loads(out)
+            # Ensure required keys exist with defaults
+            data.setdefault('smart_status', {'passed': True})
+            data.setdefault('temperature', {'current': 0})
+            data.setdefault('model_name', raw_device)
+            data.setdefault('serial_number', 'N/A')
+            return data
+        except subprocess.CalledProcessError as e:
+            # smartctl exit code 4 means some attrs are informational — still parse
+            try:
+                data = json.loads(e.output if hasattr(e, 'output') and e.output else '{}')
+                data.setdefault('smart_status', {'passed': False})
+                data.setdefault('temperature', {'current': 0})
+                data.setdefault('model_name', raw_device)
+                data.setdefault('serial_number', 'N/A')
+                return data
+            except Exception:
+                pass
+        except FileNotFoundError:
+            print("smartctl not found — install smartmontools: sudo apt install smartmontools")
+        except Exception as e:
+            print(f"Error checking SMART: {e}")
+
+    # Dev fallback: use real disk usage stats, placeholder SMART fields
+    try:
+        usage = psutil.disk_usage('/')
+        total_gb = round(usage.total / (1024**3), 1)
+    except Exception:
+        total_gb = 0
+
+    return {
         "device": {"name": raw_device, "type": "sat"},
         "smart_status": {"passed": True},
-        "temperature": {"current": 42},
-        "model_name": "SanDisk Ultra 3D",
-        "serial_number": "1234567890",
-        "user_capacity": {"bytes": 1000204886016},
+        "temperature": {"current": 0},
+        "model_name": f"{raw_device} (smartctl unavailable in dev)",
+        "serial_number": "N/A — run in production for real data",
+        "user_capacity": {"bytes": int(total_gb * 1024**3)},
         "json_format_version": [1, 0]
     }
-
-    try:
-        # Check if smartctl exists
-        if run_sudo_command(['type', 'smartctl'])[0]:
-             # In production:
-             # out = subprocess.check_output(['sudo', 'smartctl', '-H', '-i', '-A', '-j', raw_device])
-             # return json.loads(out)
-             pass
-    except Exception as e:
-        print(f"Error checking SMART: {e}")
-        
-    # Return mock data for this environment
-    return mock_smart_data
 
 @app.route('/health')
 @admin_required
@@ -1388,65 +1421,82 @@ def execute_command():
     data = request.json
     if not data or 'command' not in data:
         return jsonify({"error": "No command provided"}), 400
-        
+
     raw_command = data['command']
-    
-    # The AI often outputs: "1. Step description: sudo do_thing"
-    # We want to parse this into a valid bash script.
+
+    import re
+
+    # Parse the AI output into executable shell lines.
+    # The model often outputs: "1. Description: sudo command arg"
+    # Strategy: extract lines that look like shell commands.
     extracted_commands = []
     for line in raw_command.splitlines():
         line = line.strip()
         if not line:
             continue
-            
-        import re
-        
-        # Strip numbering like "1. ", "12. "
-        line = re.sub(r'^\d+\.\s*', '', line).strip()
-        
-        # Strip descriptive prefixes like "Restart service: sudo..."
-        if ':' in line and 'sudo' in line:
-            parts = line.split(':', 1)
-            if len(parts) == 2 and 'sudo' in parts[1]:
-                 line = parts[1].strip()
-                 
-        # If the line contains "sshd -t", we MUST inject a fix for the missing /run/sshd
+
+        # Strip numbering: "1. ", "2) "
+        line = re.sub(r'^\d+[.)\s]+', '', line).strip()
+
+        # Strip descriptive prefix before a sudo/systemctl command:
+        # e.g. "Restart service: sudo systemctl restart smbd" -> "sudo systemctl restart smbd"
+        colon_match = re.match(r'^[^:]+:\s*(sudo\s.+|systemctl\s.+)', line)
+        if colon_match:
+            line = colon_match.group(1).strip()
+
+        # Inject prerequisite for sshd config test
         if 'sshd' in line and '-t' in line:
-             extracted_commands.append("sudo mkdir -p /run/sshd")
-             
-        # If it's a naked command after stripping, add it
-        if line.startswith(('sudo ', 'systemctl ', 'ls ', 'cat ', 'chmod ', 'chown ', 'mkdir ', 'smbstatus ')):
+            extracted_commands.append('sudo mkdir -p /run/sshd')
+
+        # Accept any line that starts with a known shell token or looks like a command
+        # Reject lines that are clearly prose (no lowercase command token at start)
+        SHELL_PREFIXES = (
+            'sudo ', 'systemctl ', 'ls ', 'cat ', 'chmod ', 'chown ',
+            'mkdir ', 'smbstatus ', 'smbpasswd ', 'useradd ', 'userdel ',
+            'mount ', 'umount ', 'df ', 'du ', 'rsync ', 'mdadm ',
+            'exportfs ', 'showmount ', 'nfsstat ', 'journalctl ', 'tail ',
+            'grep ', 'echo ', 'find ', 'cp ', 'mv ', 'rm ', 'tar ',
+            'apt ', 'dpkg ', 'service ', 'ip ', 'ping ', 'ss ', 'netstat ',
+        )
+        first_word = line.split()[0].lower() if line.split() else ''
+        if line.startswith(SHELL_PREFIXES) or (
+            first_word and
+            not any(c.isupper() for c in first_word) and
+            re.match(r'^[a-z][a-z0-9_-]*$', first_word) and
+            len(line.split()) >= 2
+        ):
             extracted_commands.append(line)
-        elif line and not extracted_commands:
-            # We must be very strict to avoid running descriptive text like "Test configuration"
-            # If it has NO spaces and looks like a valid bin execution, keeping it
-            # Otherwise dump it.
-            if len(line.split()) < 3 and not any(c.isupper() for c in line.split()[0]):
-                extracted_commands.append(line)
-            
-    final_script = " && ".join(extracted_commands)
-    
+
+    if not extracted_commands:
+        # Nothing parseable — run the raw command as-is (user copy-pasted a real command)
+        final_script = raw_command.strip()
+    else:
+        final_script = ' && '.join(extracted_commands)
+
     try:
-        # Run parsed script safely
-        result = subprocess.run(final_script, shell=True, capture_output=True, text=True, timeout=120)
-        
-        output = result.stdout
-        if result.stderr:
-            output += "\n" + result.stderr if output else result.stderr
-            
+        result = subprocess.run(
+            final_script, shell=True,
+            capture_output=True, text=True, timeout=120
+        )
+
+        stdout = result.stdout or ''
+        stderr = result.stderr or ''
+        output = stdout
+        if stderr:
+            output = (output + '\n' + stderr).strip() if output else stderr
+
         if not output.strip() and result.returncode == 0:
-            output = "Command executed successfully (no output)."
-            
+            output = '(Command completed with no output — exit code 0)'
+
         return jsonify({
-            "status": "success" if result.returncode == 0 else "error",
-            "output": output,
-            "returncode": result.returncode
+            'status': 'success' if result.returncode == 0 else 'error',
+            'output': output,
+            'returncode': result.returncode
         })
+    except subprocess.TimeoutExpired:
+        return jsonify({'status': 'error', 'output': 'Command timed out after 120 seconds.'})
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "output": str(e)
-        })
+        return jsonify({'status': 'error', 'output': str(e)})
 
 
 if __name__ == '__main__':
