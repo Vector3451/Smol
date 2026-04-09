@@ -3,48 +3,20 @@
 {% block title %}System Diagnostics{% endblock %}
 
 {% block content %}
-<div class="card" style="text-align: center;">
+<div class="card" style="text-align: center;" id="smart-card">
     <h2 class="card-title">Drive Integrity (SMART)</h2>
-
-    <div style="padding: 20px;">
-        {% if smart.smart_status.passed %}
-        <div style="font-size: 3rem; color: var(--accent-green); text-shadow: 0 0 10px var(--accent-green);">
-            PASSED
-        </div>
-        <div style="color: var(--text-secondary); margin-top: 5px;">Drive Health Optimal</div>
-        {% else %}
-        <div style="font-size: 3rem; color: var(--accent-red); text-shadow: 0 0 10px var(--accent-red);">
-            FAILING
-        </div>
-        <div style="color: var(--accent-red); margin-top: 5px;">Replace Drive Immediately</div>
-        {% endif %}
+    <div id="smart-status-display" style="padding: 20px;">
+        <div style="font-size: 2rem; color: var(--text-secondary);">Loading...</div>
     </div>
 </div>
 
 <div class="stat-grid" style="margin-bottom: 25px;">
-    <!-- Telemetry -->
+    <!-- Disk Details -->
     <div class="card" style="margin-bottom: 0;">
         <h2 class="card-title">Disk Details</h2>
         <div class="table-container">
-            <table>
-                <tr>
-                    <td style="width: 40%; color: var(--text-secondary);">Model</td>
-                    <td>{{ smart.model_name }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--text-secondary);">Serial</td>
-                    <td style="font-family: monospace;">{{ smart.serial_number }}</td>
-                </tr>
-                <tr>
-                    <td style="color: var(--text-secondary);">Temp</td>
-                    <td>
-                        {% if smart.temperature.current < 50 %} <span style="color: var(--accent-green);">{{
-                            smart.temperature.current }}°C</span>
-                            {% else %}
-                            <span style="color: var(--accent-red);">{{ smart.temperature.current }}°C</span>
-                            {% endif %}
-                    </td>
-                </tr>
+            <table id="disk-details-table">
+                <tr><td colspan="2" style="color: var(--text-secondary);">Fetching...</td></tr>
             </table>
         </div>
     </div>
@@ -53,27 +25,8 @@
     <div class="card" style="margin-bottom: 0;">
         <h2 class="card-title">Service Manager</h2>
         <div class="table-container">
-            <table>
-                {% for service, status in services.items() %}
-                <tr>
-                    <td style="text-transform: capitalize;">{{ service }}</td>
-                    <td>
-                        {% if status == 'active' or status == 'running' %}
-                        <span style="color: var(--accent-green);">Dataset Running</span>
-                        {% else %}
-                        <span style="color: var(--accent-red);">Stopped</span>
-                        {% endif %}
-                    </td>
-                    <td style="text-align: right;">
-                        {% if service != 'nas-ui' %}
-                        <form action="{{ url_for('service_action', action='restart', name=service) }}" method="POST"
-                            style="display:inline;">
-                            <button style="padding: 2px 8px; font-size: 0.7rem;">Restart</button>
-                        </form>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
+            <table id="services-table">
+                <tr><td colspan="3" style="color: var(--text-secondary);">Fetching...</td></tr>
             </table>
         </div>
     </div>
@@ -82,21 +35,9 @@
 <!-- Logs -->
 <div class="card">
     <h2 class="card-title">System Logs (Recent Events)</h2>
-    <div
-        style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; height: 150px; overflow-y: scroll; font-family: monospace; font-size: 0.9rem;">
-        {% if logs %}
-        {% for log in logs %}
-        <div style="margin-bottom: 5px; border-bottom: 1px solid rgba(255,255,255,0.05);">
-            <span style="color: var(--text-secondary);">[{{ log.time }}]</span>
-            <span class="{{ 'text-red' if log.level == 'ERROR' else 'text-cyan' }}" style="font-weight: bold;">
-                {{ log.level }}
-            </span> :
-            {{ log.msg }}
-        </div>
-        {% endfor %}
-        {% else %}
-        <div style="color: var(--text-secondary);">No recent logs available.</div>
-        {% endif %}
+    <div id="logs-container"
+        style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 4px; height: 200px; overflow-y: scroll; font-family: monospace; font-size: 0.85rem;">
+        <div style="color: var(--text-secondary);">Loading logs...</div>
     </div>
 </div>
 
@@ -106,10 +47,8 @@
     <div style="display: flex; gap: 20px; justify-content: center; padding: 20px;">
         <form action="{{ url_for('system_power') }}" method="POST" onsubmit="return confirm('Reboot system?');">
             <input type="hidden" name="action" value="reboot">
-            <button type="submit" style="border-color: var(--text-secondary); color: var(--text-primary);">Reboot
-                System</button>
+            <button type="submit" style="border-color: var(--text-secondary); color: var(--text-primary);">Reboot System</button>
         </form>
-
         <form action="{{ url_for('system_power') }}" method="POST"
             onsubmit="return confirm('SHUTDOWN system? This requires manual power-on.');">
             <input type="hidden" name="action" value="shutdown">
@@ -117,4 +56,89 @@
         </form>
     </div>
 </div>
+
+<script>
+async function loadHealthData() {
+    try {
+        const response = await fetch('/api/health/data');
+        if (!response.ok) throw new Error('Failed to fetch health data');
+        const data = await response.json();
+
+        // ---- SMART Status ----
+        const smart = data.smart || {};
+        const passed = smart.smart_status && smart.smart_status.passed;
+        const statusEl = document.getElementById('smart-status-display');
+        statusEl.innerHTML = passed
+            ? `<div style="font-size: 3rem; color: var(--accent-green); text-shadow: 0 0 10px var(--accent-green);">PASSED</div>
+               <div style="color: var(--text-secondary); margin-top: 5px;">Drive Health Optimal</div>`
+            : `<div style="font-size: 3rem; color: var(--accent-red); text-shadow: 0 0 10px var(--accent-red);">FAILING</div>
+               <div style="color: var(--accent-red); margin-top: 5px;">Replace Drive Immediately</div>`;
+
+        // ---- Disk Details ----
+        const temp = (smart.temperature && smart.temperature.current != null) ? smart.temperature.current : '—';
+        const tempColor = (typeof temp === 'number' && temp > 0)
+            ? (temp < 50 ? 'var(--accent-green)' : 'var(--accent-red)')
+            : 'var(--text-secondary)';
+        const tempStr = (typeof temp === 'number' && temp > 0) ? `${temp}°C` : 'N/A';
+
+        document.getElementById('disk-details-table').innerHTML = `
+            <tr>
+                <td style="width:40%;color:var(--text-secondary);">Model</td>
+                <td>${smart.model_name || '—'}</td>
+            </tr>
+            <tr>
+                <td style="color:var(--text-secondary);">Serial</td>
+                <td style="font-family:monospace;">${smart.serial_number || '—'}</td>
+            </tr>
+            <tr>
+                <td style="color:var(--text-secondary);">Temp</td>
+                <td><span style="color:${tempColor};">${tempStr}</span></td>
+            </tr>`;
+
+        // ---- Services ----
+        const services = data.services || {};
+        let svcHtml = '';
+        for (const [name, status] of Object.entries(services)) {
+            const isActive = status === 'active' || status === 'running';
+            const badge = isActive
+                ? `<span style="color:var(--accent-green);">Running</span>`
+                : `<span style="color:var(--accent-red);">${status}</span>`;
+            const restartBtn = name !== 'nas-ui'
+                ? `<form action="/service/restart/${name}" method="POST" style="display:inline;">
+                       <button style="padding:2px 8px;font-size:0.7rem;">Restart</button>
+                   </form>`
+                : '';
+            svcHtml += `<tr>
+                <td style="text-transform:capitalize;">${name}</td>
+                <td>${badge}</td>
+                <td style="text-align:right;">${restartBtn}</td>
+            </tr>`;
+        }
+        document.getElementById('services-table').innerHTML = svcHtml || '<tr><td colspan="3" style="color:var(--text-secondary);">No services found</td></tr>';
+
+        // ---- Logs ----
+        const logs = data.logs || [];
+        const logsEl = document.getElementById('logs-container');
+        if (logs.length === 0) {
+            logsEl.innerHTML = '<div style="color:var(--text-secondary);">No recent log entries available.</div>';
+        } else {
+            logsEl.innerHTML = logs.map(log => {
+                const cls = log.level === 'ERROR' ? 'text-red' : 'text-cyan';
+                return `<div style="margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <span style="color:var(--text-secondary);">[${log.time}]</span>
+                    <span class="${cls}" style="font-weight:bold;"> ${log.level}</span>: ${log.msg}
+                </div>`;
+            }).join('');
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+
+    } catch (err) {
+        document.getElementById('smart-status-display').innerHTML =
+            `<div style="color:var(--accent-red);">Error loading diagnostics: ${err.message}</div>`;
+    }
+}
+
+// Load on page ready
+loadHealthData();
+</script>
 {% endblock %}

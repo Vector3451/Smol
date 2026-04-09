@@ -180,8 +180,10 @@
         }
 
         termContainer.style.display = "block";
-        terminalDiv.style.opacity = "0.5";
-        terminalDiv.textContent = "Executing...\n$ " + command + "\n";
+        // Show a clean prompt, like an actual terminal session
+        terminalDiv.textContent = "$ " + command + "\n\n[Executing...]\n";
+        terminalDiv.style.opacity = "0.7";
+        terminalDiv.scrollTop = terminalDiv.scrollHeight;
 
         try {
             const response = await fetch('/api/assistant/execute', {
@@ -191,16 +193,20 @@
             });
 
             const data = await response.json();
+            const exitCode = data.returncode !== undefined ? data.returncode : '?';
+            const statusLine = data.status === 'success'
+                ? `\n\n[Exit code: ${exitCode} ✓]`
+                : `\n\n[Exit code: ${exitCode} ✗ — Error]`;
 
             terminalDiv.style.opacity = "1";
-            if (response.ok) {
-                terminalDiv.textContent += "\n" + data.output;
-            } else {
-                terminalDiv.textContent += `\nError: ${data.output || 'Execution failed'}`;
-            }
+            // Replace content with clean output (no more "Executing..."), just result
+            terminalDiv.textContent = "$ " + command + "\n\n" + (data.output || '(no output)') + statusLine;
         } catch (error) {
             terminalDiv.style.opacity = "1";
-            terminalDiv.textContent += `\nConnection Error: ${error.message}`;
+            terminalDiv.textContent += `\n\n[Connection Error: ${error.message}]`;
+        } finally {
+            // Always scroll to show the latest output
+            terminalDiv.scrollTop = terminalDiv.scrollHeight;
         }
     }
 
