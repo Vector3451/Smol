@@ -358,15 +358,18 @@
                 {% if current_user.is_authenticated %}
                     {% if current_user.is_admin %}
                     <a href="{{ url_for('index') }}">Dashboard</a>
-                    <a href="{{ url_for('storage') }}">Storage</a>
-                    <a href="{{ url_for('users') }}">Users</a>
+                    <a href="{{ url_for('files') }}">Explorer</a>
                     <a href="{{ url_for('shares') }}">Shares</a>
+                    <a href="{{ url_for('users') }}">Users</a>
                     <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('storage') }}">Storage</a>
                     <a href="{{ url_for('backup') }}">Backup</a>
                     <a href="{{ url_for('health') }}">Diagnostics</a>
                     <a href="{{ url_for('assistant') }}">Assistant</a>
                     {% endif %}
+                {% if current_user.is_authenticated and not current_user.is_admin %}
                 <a href="{{ url_for('files') }}">Explorer</a>
+                {% endif %}
                 <a href="{{ url_for('logout') }}" class="logout-btn">Disconnect</a>
                 {% endif %}
             </nav>
