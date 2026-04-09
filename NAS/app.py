@@ -329,25 +329,51 @@ def get_system_users():
 
 def run_sudo_command(cmd_list):
     """
-    Helper to run sudo commands. 
+    Helper to run sudo commands.
+    Uses -n (non-interactive) so sudo never blocks waiting for a password.
+    If sudo requires a password and NOPASSWD is not set, it fails immediately
+    with a clear error instead of hanging the web server.
     Returns (success, message).
     """
-    # For local test environment safety:
-    # Check if we are actually allowed to run sudo or if we are in testing mode.
-    # We will assume if 'sudo' is not found or fails, we mock success for the UI flow.
     try:
-        # Check if we are on a system with sudo and user permissions (simplified check)
-        # In production, we just run it.
         if os.environ.get('NAS_ENV') != 'production':
             print(f"SIMULATED COMMAND: {' '.join(cmd_list)}")
             return True, "Simulated success"
-            
-        subprocess.check_output(cmd_list, stderr=subprocess.STDOUT)
-        return True, "Success"
-    except subprocess.CalledProcessError as e:
-        return False, f"Command failed: {e.output.decode().strip()}"
+
+        # Build the final command: inject -n after 'sudo' for non-interactive mode
+        if cmd_list and cmd_list[0] == 'sudo':
+            final_cmd = ['sudo', '-n'] + cmd_list[1:]
+        else:
+            final_cmd = cmd_list
+
+        result = subprocess.run(
+            final_cmd,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,  # No TTY, never prompt
+            timeout=15
+        )
+
+        if result.returncode == 0:
+            return True, result.stdout.strip() or "Success"
+        else:
+            err = (result.stderr or result.stdout or "Unknown error").strip()
+            # Detect 'sudo: a password is required' and give actionable advice
+            if 'password is required' in err or 'password required' in err:
+                err = (
+                    f"sudo NOPASSWD not configured for this command. "
+                    f"Add to /etc/sudoers via visudo:\n"
+                    f"  vboxuser ALL=(ALL) NOPASSWD: ALL"
+                )
+            return False, err
+
+    except subprocess.TimeoutExpired:
+        return False, "Command timed out (15s). Check if the process is hanging."
+    except FileNotFoundError:
+        return False, "sudo not found on this system."
     except Exception as e:
         return False, str(e)
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -529,7 +555,8 @@ def delete_user():
         flash(f"Cannot delete protected system account '{username}'.")
         return redirect(url_for('users'))
 
-    # 1. Remove Samba user first (non-fatal if it fails)
+    # 1. Remove Samba user first (non-fatal — user may not exist in Samba)
+    # smbpasswd -x does not need stdin piping, just a direct sudo call
     run_sudo_command(['sudo', 'smbpasswd', '-x', username])
 
     # 2. Delete Linux user and their home directory
@@ -537,7 +564,7 @@ def delete_user():
     if success:
         flash(f"User '{username}' deleted successfully.")
     else:
-        flash(f"Error deleting user: {msg}")
+        flash(f"Error deleting user '{username}': {msg}")
 
     return redirect(url_for('users'))
 
@@ -932,7 +959,7 @@ def get_disk_health():
     if os.environ.get('NAS_ENV') == 'production':
         try:
             out = subprocess.check_output(
-                ['sudo', 'smartctl', '-H', '-i', '-A', '-j', raw_device],
+                ['sudo', '-n', 'smartctl', '-H', '-i', '-A', '-j', raw_device],
                 text=True, stderr=subprocess.DEVNULL, timeout=10
             )
             data = json.loads(out)
