@@ -114,8 +114,9 @@
                         {% if f.is_dir %}
                             <a href="{{ url_for('files', subpath=f.path) }}" style="font-weight:bold;">{{ f.name }}</a>
                         {% elif is_image %}
-                            <a href="#" style="color:var(--accent-green);"
-                                onclick="openLightbox('{{ url_for('download_file', path=f.path) }}', '{{ f.name }}'); return false;">
+                            <a href="#" style="color:var(--accent-green);" class="img-preview-link"
+                                data-src="{{ url_for('download_file', path=f.path) }}"
+                                data-name="{{ f.name }}">
                                 {{ f.name }}
                             </a>
                         {% elif is_video %}
@@ -140,7 +141,9 @@
                             {% if not f.is_dir %}
                                 {% if is_image %}
                                 {# Preview button #}
-                                <button onclick="openLightbox('{{ url_for('download_file', path=f.path) }}', '{{ f.name }}')"
+                                <button class="img-preview-link"
+                                    data-src="{{ url_for('download_file', path=f.path) }}"
+                                    data-name="{{ f.name }}"
                                     style="padding:4px 10px; font-size:0.75rem; border-color:var(--accent-green);
                                            color:var(--accent-green); background:rgba(57,255,20,0.08);
                                            box-shadow:inset 0 0 5px rgba(57,255,20,0.15);">👁 Preview</button>
@@ -192,10 +195,10 @@
 
 <script>
 function openLightbox(src, name) {
-    const lb      = document.getElementById('lightbox');
-    const img     = document.getElementById('lightbox-img');
-    const nameEl  = document.getElementById('lightbox-name');
-    const dlBtn   = document.getElementById('lightbox-download');
+    const lb     = document.getElementById('lightbox');
+    const img    = document.getElementById('lightbox-img');
+    const nameEl = document.getElementById('lightbox-name');
+    const dlBtn  = document.getElementById('lightbox-download');
 
     img.src            = src;
     img.alt            = name;
@@ -203,8 +206,7 @@ function openLightbox(src, name) {
     dlBtn.href         = src;
     dlBtn.download     = name;
 
-    lb.style.display   = 'flex';
-    // Prevent body scroll while lightbox is open
+    lb.style.display       = 'flex';
     document.body.style.overflow = 'hidden';
 }
 
@@ -214,8 +216,16 @@ function closeLightbox() {
     document.body.style.overflow = '';
 }
 
+// Event delegation — handles both <a> and <button> with class img-preview-link
+document.addEventListener('click', function (e) {
+    const el = e.target.closest('.img-preview-link');
+    if (!el) return;
+    e.preventDefault();
+    openLightbox(el.dataset.src, el.dataset.name);
+});
+
 // Close on Escape key
-document.addEventListener('keydown', e => {
+document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeLightbox();
 });
 </script>
