@@ -46,11 +46,13 @@
     <h2 class="card-title" style="color: var(--accent-red); border-color: rgba(255, 0, 0, 0.3);">Power Controls</h2>
     <div style="display: flex; gap: 20px; justify-content: center; padding: 20px;">
         <form action="{{ url_for('system_power') }}" method="POST" onsubmit="return confirm('Reboot system?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="reboot">
             <button type="submit" style="border-color: var(--text-secondary); color: var(--text-primary);">Reboot System</button>
         </form>
         <form action="{{ url_for('system_power') }}" method="POST"
             onsubmit="return confirm('SHUTDOWN system? This requires manual power-on.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="action" value="shutdown">
             <button type="submit" class="btn-danger">Shutdown System</button>
         </form>
@@ -58,6 +60,17 @@
 </div>
 
 <script>
+// HTML-escape everything that comes from the server before it is placed into
+// innerHTML (disk model names, serial numbers, service statuses, log lines).
+function esc(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 async function loadHealthData() {
     try {
         const response = await fetch('/api/health/data');
@@ -84,15 +97,15 @@ async function loadHealthData() {
         document.getElementById('disk-details-table').innerHTML = `
             <tr>
                 <td style="width:40%;color:var(--text-secondary);">Model</td>
-                <td>${smart.model_name || '—'}</td>
+                <td>${esc(smart.model_name || '—')}</td>
             </tr>
             <tr>
                 <td style="color:var(--text-secondary);">Serial</td>
-                <td style="font-family:monospace;">${smart.serial_number || '—'}</td>
+                <td style="font-family:monospace;">${esc(smart.serial_number || '—')}</td>
             </tr>
             <tr>
                 <td style="color:var(--text-secondary);">Temp</td>
-                <td><span style="color:${tempColor};">${tempStr}</span></td>
+                <td><span style="color:${tempColor};">${esc(tempStr)}</span></td>
             </tr>`;
 
         // ---- Services ----
@@ -102,14 +115,16 @@ async function loadHealthData() {
             const isActive = status === 'active' || status === 'running';
             const badge = isActive
                 ? `<span style="color:var(--accent-green);">Running</span>`
-                : `<span style="color:var(--accent-red);">${status}</span>`;
-            const restartBtn = name !== 'nas-ui'
-                ? `<form action="/service/restart/${name}" method="POST" style="display:inline;">
+                : `<span style="color:var(--accent-red);">${esc(status)}</span>`;
+            const safeName = String(name);
+            const restartBtn = safeName !== 'nas-ui'
+                ? `<form action="/service/restart/${encodeURIComponent(safeName)}" method="POST" style="display:inline;">
+                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                        <button style="padding:2px 8px;font-size:0.7rem;">Restart</button>
                    </form>`
                 : '';
             svcHtml += `<tr>
-                <td style="text-transform:capitalize;">${name}</td>
+                <td style="text-transform:capitalize;">${esc(safeName)}</td>
                 <td>${badge}</td>
                 <td style="text-align:right;">${restartBtn}</td>
             </tr>`;
@@ -123,10 +138,10 @@ async function loadHealthData() {
             logsEl.innerHTML = '<div style="color:var(--text-secondary);">No recent log entries available.</div>';
         } else {
             logsEl.innerHTML = logs.map(log => {
-                const cls = log.level === 'ERROR' ? 'text-red' : 'text-cyan';
+                const cls = esc(log.level) === 'ERROR' ? 'text-red' : 'text-cyan';
                 return `<div style="margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <span style="color:var(--text-secondary);">[${log.time}]</span>
-                    <span class="${cls}" style="font-weight:bold;"> ${log.level}</span>: ${log.msg}
+                    <span style="color:var(--text-secondary);">[${esc(log.time)}]</span>
+                    <span class="${cls}" style="font-weight:bold;"> ${esc(log.level)}</span>: ${esc(log.msg)}
                 </div>`;
             }).join('');
             logsEl.scrollTop = logsEl.scrollHeight;
@@ -134,7 +149,7 @@ async function loadHealthData() {
 
     } catch (err) {
         document.getElementById('smart-status-display').innerHTML =
-            `<div style="color:var(--accent-red);">Error loading diagnostics: ${err.message}</div>`;
+            `<div style="color:var(--accent-red);">Error loading diagnostics: ${esc(err.message)}</div>`;
     }
 }
 

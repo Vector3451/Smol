@@ -40,6 +40,7 @@
                         <form action="{{ url_for('delete_share') }}" method="POST"
                             onsubmit="return confirm('Decommission share node {{ share.name }}?');"
                             style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="name" value="{{ share.name }}">
                             <button type="submit" class="btn-danger"
                                 style="width: auto; padding: 5px 10px; font-size: 0.8rem;">Purge</button>
@@ -55,6 +56,7 @@
 <div class="card">
     <h2 class="card-title">Initialize New Node</h2>
     <form action="{{ url_for('add_share') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
             <div>
                 <label>Share Name</label>

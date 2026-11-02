@@ -3,13 +3,21 @@ import requests
 import json
 import urllib3
 
-# Suppress insecure request warnings if dev instances have self-signed certs
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 # Configuration from Environment Variables (Read by systemd in production)
 SN_INSTANCE = os.environ.get('SN_INSTANCE', 'dev337329.service-now.com')
 SN_USER = os.environ.get('SN_USER', 'admin')  # Change this to your integration user
 SN_PASS = os.environ.get('SN_PASS', 'dummy_password') # Dummy by default to prevent accidental spam
+
+# SECURITY: TLS certificate verification is ON by default. Set SN_TLS_VERIFY=0
+# only when your instance really does serve a self-signed/dev certificate —
+# never against production data.
+SN_VERIFY_TLS = os.environ.get('SN_TLS_VERIFY', '1').strip().lower() in ('1', 'true', 'yes')
+if not SN_VERIFY_TLS:
+    # Scoped suppression (only the InsecureRequestWarning), and only when
+    # verification was explicitly disabled by the operator.
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    print("WARNING: SN_TLS_VERIFY is disabled — ServiceNow TLS certificates "
+          "will NOT be validated. Use only with dev instances.")
 
 def _get_base_url():
     if not SN_INSTANCE.startswith('http'):
@@ -37,7 +45,7 @@ def create_incident(short_description, description, urgency=1, impact=1):
     }
     
     try:
-        response = requests.post(url, auth=(SN_USER, SN_PASS), headers=headers, json=payload, verify=False, timeout=10)
+        response = requests.post(url, auth=(SN_USER, SN_PASS), headers=headers, json=payload, verify=SN_VERIFY_TLS, timeout=10)
         response.raise_for_status()
         incident_number = response.json().get('result', {}).get('number', 'UNKNOWN')
         print(f"[SERVICENOW SUCCESS] Created Incident: {incident_number}")
@@ -69,7 +77,7 @@ def log_audit_event(username, action, filename, details=""):
     }
     
     try:
-         response = requests.post(url, auth=(SN_USER, SN_PASS), headers=headers, json=payload, verify=False, timeout=10)
+         response = requests.post(url, auth=(SN_USER, SN_PASS), headers=headers, json=payload, verify=SN_VERIFY_TLS, timeout=10)
          if response.status_code == 201:
               print(f"[SERVICENOW SUCCESS] Audit log synced.")
               return True

@@ -1,2 +1,6 @@
 *.gguf filter=lfs diff=lfs merge=lfs -text
 nas_model_250m/* filter=lfs diff=lfs merge=lfs -text
+
+# Shell scripts and systemd units must keep LF endings to work on Linux
+*.sh text eol=lf
+*.service text eol=lf

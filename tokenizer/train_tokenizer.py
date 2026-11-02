@@ -22,7 +22,18 @@ SPECIAL_TOKENS = [
 
 def main():
     print("Training tokenizer on corpus...")
-    
+
+    # Fail early with an actionable message instead of a cryptic
+    # tokenizers-library error when the corpus is missing.
+    if not os.path.exists(CORPUS_FILE):
+        raise FileNotFoundError(
+            f"Corpus not found: {CORPUS_FILE}\n"
+            "The training corpus is not included in this repository (it is "
+            "excluded via .gitignore because it is large scraped data). "
+            "Re-generate it yourself or place a UTF-8 text file at "
+            "data/cleaned/stackexchange_nas.txt before training."
+        )
+
     tokenizer = ByteLevelBPETokenizer()
 
     tokenizer.train(

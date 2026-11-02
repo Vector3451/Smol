@@ -6,6 +6,7 @@
 <div class="card">
     <h2 class="card-title">Samba Global Configuration</h2>
     <form action="{{ url_for('update_samba_global') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
             <div>
                 <label>Workgroup</label>

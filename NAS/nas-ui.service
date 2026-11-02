@@ -8,10 +8,13 @@ WorkingDirectory=/home/dev/nas-ui
 ExecStart=/usr/bin/python3 app.py
 Restart=always
 Environment=PYTHONUNBUFFERED=1
-Environment=NAS_USER=dev
-Environment=NAS_PASSWORD=*REMOVED*
-Environment=SECRET_KEY=*REMOVED*
 
+# SECURITY: credentials and secrets are NOT stored in this unit file (it used
+# to ship NAS_PASSWORD and SECRET_KEY inline, which leaked them into git
+# history and `systemctl cat`). Copy NAS/.env.example to /etc/nas/nas-ui.env,
+# fill in real values, chmod 600 it, and it will be loaded here:
+#   NAS_USER, NAS_PASSWORD, SECRET_KEY (see .env.example for the full list)
+EnvironmentFile=/etc/nas/nas-ui.env
 
 [Install]
 WantedBy=multi-user.target

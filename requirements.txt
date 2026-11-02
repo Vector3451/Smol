@@ -1,0 +1,14 @@
+# Smol NAS — runtime dependencies
+#
+# Python 3.10 – 3.12 recommended (tested on the Raspberry Pi OS / Ubuntu
+# images this project targets). torch wheels vary by platform and CUDA —
+# see https://pytorch.org/get-started/locally/ if `pip install torch` fails.
+Flask>=2.2,<4
+Flask-Login>=0.6,<1
+psutil>=5.9
+requests>=2.28
+urllib3>=1.26,<3
+pyOpenSSL>=23.0
+torch>=2.0
+transformers>=4.30
+tokenizers>=0.13  # only needed to re-train the tokenizer (tokenizer/train_tokenizer.py)

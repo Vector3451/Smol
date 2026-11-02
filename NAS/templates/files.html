@@ -53,6 +53,7 @@
             <h2 class="card-title" style="margin-bottom:5px;">Explorer: /{{ current_path }}</h2>
             <form action="{{ url_for('upload_file') }}" method="POST" enctype="multipart/form-data"
                 style="display:flex; gap:10px; align-items:center;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="path" value="{{ current_path }}">
                 <input type="file" name="file" style="width:auto; padding:5px;">
                 <button type="submit" style="padding:5px 15px; font-size:0.8rem;">Upload</button>
@@ -165,6 +166,7 @@
                             {% if current_user.is_admin and not f.is_dir %}
                                 <form action="{{ url_for('delete_file') }}" method="POST" style="display:inline;"
                                     onsubmit="return confirm('Permanently delete {{ f.name }}?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="path" value="{{ f.path }}">
                                     <button type="submit"
                                         style="padding:4px 8px; font-size:0.75rem; border-color:var(--accent-red);
@@ -176,6 +178,7 @@
                             {% if current_user.is_admin and f.is_dir %}
                                 <form action="{{ url_for('delete_file') }}" method="POST" style="display:inline;"
                                     onsubmit="return confirm('Permanently delete folder {{ f.name }} and ALL contents?');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="hidden" name="path" value="{{ f.path }}">
                                     <button type="submit"
                                         style="padding:4px 8px; font-size:0.75rem; border-color:var(--accent-red);

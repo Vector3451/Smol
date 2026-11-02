@@ -64,6 +64,7 @@
                         <div style="display: flex; gap: 10px;">
                             {% if part.mountpoint %}
                             <form action="{{ url_for('unmount_disk') }}" method="POST" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <input type="hidden" name="device" value="{{ part.name }}">
                                 <button type="submit" class="btn-danger"
                                     style="padding: 5px 10px; font-size: 0.8rem;">Unmount</button>
@@ -96,6 +97,7 @@
         style="background:var(--card-bg); width:400px; margin: 100px auto; padding:20px; border-radius:12px; border:1px solid var(--accent-cyan);">
         <h3 style="margin-top:0;">Mount Partition</h3>
         <form action="{{ url_for('mount_disk') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" id="mountDevice" name="device">
 
             <label>Partition</label>
@@ -122,6 +124,7 @@
         <p>This will ERASE ALL DATA on <span id="formatDeviceDisplay" style="font-weight:bold;"></span>.</p>
 
         <form action="{{ url_for('format_disk') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" id="formatDevice" name="device">
 
             <label>File System</label>

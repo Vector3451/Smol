@@ -4,13 +4,16 @@ import psutil
 import os
 import datetime
 import time
-import string
-import random
+import secrets
+import threading
+import re
+import posixpath
 import torch
 from transformers import GPT2LMHeadModel, GPT2TokenizerFast
 
 from flask import Flask, render_template, redirect, url_for, request, flash, send_file, jsonify, session
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.utils import secure_filename
 import servicenow
 
 # Cooldown for disk alerts to prevent spamming ServiceNow (1 hour)
@@ -23,9 +26,9 @@ else:
     os.environ['NAS_ENV'] = 'development'
 
 app = Flask(__name__)
-# Secret key is required for session management. 
-# In production, this should be a random string.
-app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_very_secret')
+# SECURITY: cap request body at 2 GB so a single malicious upload cannot
+# exhaust memory or fill the system disk with a runaway request.
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024
 
 # --- Iframe / Cross-Site Cookie Support ---
 # To allow ServiceNow to embed this page, we must allow cookies to be sent in an iframe.
@@ -39,9 +42,10 @@ app.config.update(
 
 @app.after_request
 def add_header(response):
-    # Allow ServiceNow to embed our site in an iframe
-    response.headers['X-Frame-Options'] = 'ALLOW-FROM https://dev337329.service-now.com/'
-    # Better modern way
+    # Allow ServiceNow to embed our site in an iframe.
+    # NOTE: X-Frame-Options: ALLOW-FROM is deprecated and untrusted by modern
+    # browsers; CSP frame-ancestors below is the correct replacement and is
+    # what actually does the work.
     response.headers['Content-Security-Policy'] = "frame-ancestors 'self' https://dev337329.service-now.com/"
     return response
 
@@ -69,16 +73,101 @@ try:
 except Exception as e:
     print(f"Failed to load model: {e}")
     MODEL_LOADED = False
-app.secret_key = os.environ.get('SECRET_KEY', 'dev_key_very_secret')
+
+# --- Secret Key (single source of truth) ---
+# SECURITY: never ship a hardcoded default secret. Use the SECRET_KEY
+# environment variable in production. If it is unset, fall back to a random
+# key (sessions are then invalidated on every restart) and warn the operator.
+if os.environ.get('SECRET_KEY'):
+    app.secret_key = os.environ['SECRET_KEY']
+else:
+    app.secret_key = secrets.token_hex(32)
+    print(
+        "WARNING: SECRET_KEY is not set. Generated a random session key; "
+        "users will be logged out whenever the server restarts. "
+        "Set SECRET_KEY in your environment file (see .env.example)."
+    )
 
 # Flask-Login Setup
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
+# --- CSRF Protection (C2) ---
+# Every state-changing (POST) request must present a token that is bound to
+# the user's session. HTML forms get it through the hidden `csrf_token`
+# input rendered by the {{ csrf_token() }} helper; JSON/fetch requests send
+# it in the X-CSRF-Token header.
+@app.context_processor
+def inject_csrf_token():
+    def csrf_token():
+        token = session.get('_csrf_token')
+        if not token:
+            token = secrets.token_hex(16)
+            session['_csrf_token'] = token
+        return token
+    return dict(csrf_token=csrf_token)
+
+
+@app.before_request
+def csrf_protect():
+    if request.method != 'POST':
+        return None
+    session_token = session.get('_csrf_token')
+    request_token = request.form.get('csrf_token')
+    if not request_token and request.is_json:
+        request_token = request.headers.get('X-CSRF-Token')
+    if not session_token or not request_token or \
+            not secrets.compare_digest(session_token, request_token):
+        if request.path.startswith('/api/'):
+            return jsonify({"error": "CSRF token missing or invalid. "
+                                     "Reload the page and try again."}), 403
+        flash("Security check failed: invalid or missing CSRF token. Please try again.", "error")
+        return redirect(request.referrer or url_for('login'))
+    return None
+
+
+# --- Login Rate Limiting (companion to H2) ---
+# Simple in-memory throttle: at most 5 failed logins per (username, source IP)
+# pair within a 10 minute window. Cleared by a successful login. This is an
+# anti-brute-force speed bump, not an audit system; production deployments
+# behind SSH/auth rate limiters (or fail2ban) benefit additionally.
+_LOGIN_ATTEMPTS = {}
+_LOGIN_LOCK = threading.Lock()
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 600
+
+
+def _is_login_locked(key):
+    now = time.time()
+    with _LOGIN_LOCK:
+        recent = [t for t in _LOGIN_ATTEMPTS.get(key, []) if now - t < _LOGIN_WINDOW_SECONDS]
+        _LOGIN_ATTEMPTS[key] = recent
+        return len(recent) >= _LOGIN_MAX_ATTEMPTS
+
+
+def _record_login_failure(key):
+    now = time.time()
+    with _LOGIN_LOCK:
+        recent = [t for t in _LOGIN_ATTEMPTS.get(key, []) if now - t < _LOGIN_WINDOW_SECONDS]
+        recent.append(now)
+        _LOGIN_ATTEMPTS[key] = recent
+
+
+def _clear_login_failures(key):
+    with _LOGIN_LOCK:
+        _LOGIN_ATTEMPTS.pop(key, None)
+
+
 # User Configuration
 NAS_USER = os.environ.get('NAS_USER', 'dev')
 NAS_PASSWORD = os.environ.get('NAS_PASSWORD', 'raspberry')
+if NAS_PASSWORD == 'raspberry':
+    print(
+        "WARNING: NAS_PASSWORD is unset — falling back to the well-known "
+        "default password. Set NAS_USER/NAS_PASSWORD in your environment "
+        "file (see .env.example) before exposing this server."
+    )
 TAILSCALE_IP = None
 
 def get_tailscale_ip():
@@ -231,10 +320,19 @@ def get_samba_status():
 
     return status
 
+# Short-lived cache so rapid dashboard / API refreshes do not re-block the
+# worker on psutil's CPU sampling interval every single request.
+_SYSTEM_STATS_CACHE = {'expires': 0.0, 'data': None}
+_SYSTEM_STATS_TTL = 2.0
+
 def get_system_stats():
     """
     Gather system metrics: CPU, RAM, Uptime, Temp, Network.
     """
+    now = time.time()
+    if _SYSTEM_STATS_CACHE['data'] is not None and now < _SYSTEM_STATS_CACHE['expires']:
+        return _SYSTEM_STATS_CACHE['data']
+
     stats = {}
     
     # CPU usage
@@ -300,6 +398,8 @@ def get_system_stats():
         stats['net_sent'] = "0 MB"
         stats['net_recv'] = "0 MB"
         
+    _SYSTEM_STATS_CACHE['data'] = stats
+    _SYSTEM_STATS_CACHE['expires'] = time.time() + _SYSTEM_STATS_TTL
     return stats
 
 
@@ -361,9 +461,9 @@ def run_sudo_command(cmd_list):
             # Detect 'sudo: a password is required' and give actionable advice
             if 'password is required' in err or 'password required' in err:
                 err = (
-                    f"sudo NOPASSWD not configured for this command. "
-                    f"Add to /etc/sudoers via visudo:\n"
-                    f"  vboxuser ALL=(ALL) NOPASSWD: ALL"
+                    "sudo NOPASSWD is not configured for this command. Grant the "
+                    "minimal command list required by the NAS (see README.md, "
+                    "'System Setup' section) via visudo instead of NOPASSWD: ALL."
                 )
             return False, err
 
@@ -383,11 +483,25 @@ def login():
         return redirect(url_for('files'))
         
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
+        username = request.form.get('username') or ''
+        password = request.form.get('password') or ''
+
+        # SECURITY: only accept plausible Linux login names — this also makes
+        # any attempt to smuggle SSH options or shell metacharacters inert.
+        if not re.fullmatch(r'[a-zA-Z_][a-zA-Z0-9_-]{0,31}', username):
+            flash('Invalid username or password')
+            return render_template('login.html')
+
+        # Brute-force throttle: lock out this (username, source IP) pair
+        # after repeated failures within the window.
+        attempt_key = (username.lower(), request.remote_addr or 'unknown')
+        if _is_login_locked(attempt_key):
+            flash('Too many failed attempts. Please wait 10 minutes and try again.')
+            return render_template('login.html')
+
         # 1. Admin Check
         if username == NAS_USER and password == NAS_PASSWORD:
+            _clear_login_failures(attempt_key)
             user = User(username, is_admin=True)
             login_user(user)
             session['is_admin'] = True
@@ -400,14 +514,20 @@ def login():
         is_valid_user = False
         if os.environ.get('NAS_ENV') == 'production':
             try:
-                # Command: sshpass -p 'pass' ssh -o ... user@localhost id
+                # SECURITY: 'sshpass -e' reads the password from the SSHPASS
+                # environment variable instead of the command line, so the
+                # password is never visible in /proc/*/cmdline or `ps` output.
+                # (StrictHostKeyChecking is acceptable here because the target
+                # is always this same machine, localhost.)
                 cmd = [
-                    'sshpass', '-p', password, 
+                    'sshpass', '-e',
                     'ssh', '-o', 'StrictHostKeyChecking=no', 
                     '-o', 'PreferredAuthentications=password',
                     f'{username}@localhost', 'id'
                 ]
-                process = subprocess.run(cmd, capture_output=True, text=True)
+                env = os.environ.copy()
+                env['SSHPASS'] = password
+                process = subprocess.run(cmd, capture_output=True, text=True, env=env)
                 
                 if process.returncode == 0:
                     is_valid_user = True
@@ -426,11 +546,13 @@ def login():
                 is_valid_user = True
 
         if is_valid_user:
+            _clear_login_failures(attempt_key)
             user = User(username, is_admin=False)
             login_user(user)
             session['is_admin'] = False
             return redirect(url_for('files'))
-            
+
+        _record_login_failure(attempt_key)
         flash('Invalid username or password')
             
     return render_template('login.html')
@@ -447,15 +569,24 @@ def signup():
         return redirect(url_for('files'))
         
     if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
+        username = request.form.get('username') or ''
+        password = request.form.get('password') or ''
         
         if not username or not password:
             flash("Username and password required.")
             return redirect(url_for('signup'))
-            
+
+        # SECURITY: restrict usernames to valid Linux login names so nobody
+        # can smuggle shell metacharacters or option flags in via the form.
+        if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', username):
+            flash("Invalid username: use up to 32 lowercase letters, digits, '-' or '_', starting with a letter or '_'.")
+            return redirect(url_for('signup'))
+        if len(password) < 8:
+            flash("Password must be at least 8 characters.")
+            return redirect(url_for('signup'))
+
         # 1. Add Linux User
-        # Important: vboxuser must have NOPASSWD for useradd and chpasswd
+        # Important: the service account must have NOPASSWD for useradd and chpasswd
         success, msg = run_sudo_command(['sudo', 'useradd', '-m', '-s', '/bin/bash', username])
         if not success:
             flash(f"Registration failed: {msg}")
@@ -465,17 +596,18 @@ def signup():
         # 2. Set Linux Password
         if os.environ.get('NAS_ENV') == 'production':
             try:
-                process = subprocess.Popen(
-                    ['sudo', 'chpasswd'],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                # SECURITY: chpasswd reads "user:pass" from stdin — the
+                # password never appears in a command line or argument list.
+                result = subprocess.run(
+                    ['sudo', '-n', 'chpasswd'],
+                    input=f"{username}:{password}\n",
+                    capture_output=True,
+                    text=True,
+                    timeout=15
                 )
-                stdout, stderr = process.communicate(input=f"{username}:{password}\n")
-                if process.returncode != 0:
-                    flash(f"Failed to set password: {stderr}")
-                    print(f"Chpasswd error: {stderr}")
+                if result.returncode != 0:
+                    flash(f"Failed to set password: {result.stderr}")
+                    print(f"Chpasswd error: {result.stderr}")
                     return redirect(url_for('signup'))
             except Exception as e:
                 flash(f"Internal error setting password: {e}")
@@ -504,6 +636,11 @@ def add_user():
     if not username or not password:
         flash("Username and password required.")
         return redirect(url_for('users'))
+
+    # SECURITY: valid Linux login name only — blocks flags/metas injection.
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', username):
+        flash("Invalid username: use up to 32 lowercase letters, digits, '-' or '_', starting with a letter or '_'.")
+        return redirect(url_for('users'))
         
     # 1. Add Linux User
     # sudo useradd -m -s /bin/bash <username>
@@ -513,28 +650,49 @@ def add_user():
         return redirect(url_for('users'))
 
     # 2. Set Linux Password
-    # echo "<username>:<password>" | sudo chpasswd
-    ps = subprocess.Popen(['echo', f'{username}:{password}'], stdout=subprocess.PIPE)
-    try:
-        # In production we'd pipeline this properly
-        # For simplicity/safety in this snippet, effectively doing:
-        # subprocess.check_output(['sudo', 'chpasswd'], stdin=ps.stdout)
-        if os.environ.get('NAS_ENV') == 'production':
-             subprocess.check_output(['sudo', 'chpasswd'], stdin=ps.stdout)
-        else:
-             print(f"SIMULATED CHPASSWD for {username}")
-    except Exception as e:
-        flash(f"Failed to set password: {e}")
-        return redirect(url_for('users'))
+    # chpasswd reads "user:pass" from stdin — the password never appears in a
+    # command line or process argument list.
+    if os.environ.get('NAS_ENV') == 'production':
+        try:
+            result = subprocess.run(
+                ['sudo', '-n', 'chpasswd'],
+                input=f"{username}:{password}\n",
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            if result.returncode != 0:
+                flash(f"Failed to set password: {result.stderr}")
+                return redirect(url_for('users'))
+        except Exception as e:
+            flash(f"Failed to set password: {e}")
+            return redirect(url_for('users'))
+    else:
+        print(f"SIMULATED CHPASSWD for {username}")
 
     # 3. Add Samba User
-    # (echo "<password>"; echo "<password>") | sudo smbpasswd -a -s <username>
-    # Similar complexity to mock safely. 
+    # smbpasswd -a -s reads the password twice from stdin (the second entry
+    # confirms it), so the password never appears in a process argument list.
     if os.environ.get('NAS_ENV') != 'production':
         print(f"SIMULATED SMBPASSWD for {username}")
     else:
-        # Implementation left for real system
-        pass
+        try:
+            proc = subprocess.Popen(
+                ['sudo', '-n', 'smbpasswd', '-a', '-s', username],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            out, err = proc.communicate(input=f"{password}\n{password}\n", timeout=20)
+            if proc.returncode != 0:
+                detail = (err or out or 'unknown error').strip()
+                flash(f"User {username} created, but adding the Samba user failed: {detail}. "
+                      f"Run 'sudo smbpasswd -a {username}' manually if needed.")
+                return redirect(url_for('users'))
+        except Exception as e:
+            flash(f"User {username} created, but adding the Samba user failed: {e}")
+            return redirect(url_for('users'))
 
     flash(f"User {username} added successfully.")
     return redirect(url_for('users'))
@@ -624,9 +782,20 @@ def mount_disk():
     if not device or not mountpoint:
         flash("Device and Mountpoint required")
         return redirect(url_for('storage'))
-        
-    # Security: Ensure mountpoint is legitimate
-    if not mountpoint.startswith('/mnt') and not mountpoint.startswith('/srv'):
+
+    # SECURITY: device names are bare kernel names (e.g. 'sda1') — no slashes,
+    # dots-only paths, or shell metacharacters.
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', device) or device.startswith('.'):
+        flash("Invalid device name.")
+        return redirect(url_for('storage'))
+
+    # SECURITY: mountpoint must normalize inside /mnt or /srv. posixpath keeps
+    # the check OS-independent (paths are Linux paths even on a Windows dev
+    # box); on the Linux host realpath additionally resolves symlinks.
+    _mp_norm = posixpath.normpath(mountpoint)
+    if os.sep == '/':
+        _mp_norm = os.path.realpath(_mp_norm)
+    if not (_mp_norm == '/mnt' or _mp_norm.startswith('/mnt/') or _mp_norm == '/srv' or _mp_norm.startswith('/srv/')):
          flash("Mount point must be in /mnt or /srv")
          return redirect(url_for('storage'))
 
@@ -646,7 +815,9 @@ def mount_disk():
 def unmount_disk():
     device = request.form.get('device') # e.g. sda1
     
-    if not device:
+    # SECURITY: bare block-device names only.
+    if not device or not re.fullmatch(r'[A-Za-z0-9_.-]+', device) or device.startswith('.'):
+        flash("Invalid device name.")
         return redirect(url_for('storage'))
         
     success, msg = run_sudo_command(['sudo', 'umount', f"/dev/{device}"])
@@ -664,8 +835,22 @@ def format_disk():
     fs_type = request.form.get('fstype', 'ext4')
     label = request.form.get('label', 'NAS_DISK')
     
-    if not device:
-        flash("Device required")
+    # SECURITY: device must be a bare kernel name (this value is concatenated
+    # onto /dev/ and passed to sudo — treat it like live ammunition).
+    if not device or not re.fullmatch(r'[A-Za-z0-9_-]+', device):
+        flash("Invalid device name.")
+        return redirect(url_for('storage'))
+        
+    # SECURITY: whitelisted filesystem types only. A raw `mkfs.{fs_type}`
+    # would let `fstype=evil.sh` execute arbitrary code as root.
+    if fs_type not in ('ext4', 'ntfs', 'vfat'):
+        flash("Unsupported filesystem type.")
+        return redirect(url_for('storage'))
+        
+    # SECURITY: label charset is restricted (mixedWindows/DOS labels cap at 11
+    # chars and ext4 at 16, but a uniform safe subset is simpler to enforce).
+    if not re.fullmatch(r'[A-Za-z0-9_ .-]{0,31}', label):
+        flash("Invalid label: use up to 31 letters, digits, spaces, '.', '-', '_'.")
         return redirect(url_for('storage'))
         
     # SCARY: Format
@@ -1056,7 +1241,7 @@ def api_health_data():
 
 
 @app.route('/service/<action>/<name>', methods=['POST'])
-@login_required
+@admin_required
 def service_action(action, name):
     if action not in ['start', 'stop', 'restart']:
         flash("Invalid action")
@@ -1075,8 +1260,10 @@ def service_action(action, name):
     return redirect(url_for('health'))
 
 @app.route('/system/power', methods=['POST'])
-@login_required
+@admin_required
 def system_power():
+    # SECURITY: rebooting/shutting down the entire NAS is an admin action —
+    # standard users no longer get to power-cycle the box.
     action = request.form.get('action')
     if action == 'reboot':
         run_sudo_command(['sudo', 'reboot'])
@@ -1084,8 +1271,10 @@ def system_power():
     elif action == 'shutdown':
         run_sudo_command(['sudo', 'shutdown', 'now'])
         flash("Shutting down...")
+    else:
+        flash("Unknown power action.")
         
-    return redirect(url_for('index'))
+    return redirect(request.referrer or url_for('index'))
 
 
 @app.route('/')
@@ -1160,6 +1349,19 @@ def index():
 # --- File Browser ---
 
 NAS_ROOT = '/srv/nas'
+
+def _is_inside_nas_root(path):
+    """
+    SECURITY (C6): True only when `path` resolves strictly inside NAS_ROOT.
+    Symlinks are resolved via realpath, and 'foo/../..' style segments are
+    normalized away, so '..' escapes are impossible. The old
+    `startswith(NAS_ROOT)` check missed sibling directories like
+    '/srv/nas_evil' and did not normalize traversal segments.
+    """
+    resolved = os.path.realpath(os.path.abspath(path))
+    root = os.path.realpath(NAS_ROOT)
+    return resolved == root or resolved.startswith(root + os.sep)
+
 # Use the internal sudo wrapper to safely create the root directory if missing
 success, msg = run_sudo_command(['sudo', 'mkdir', '-p', NAS_ROOT])
 if success:
@@ -1179,7 +1381,7 @@ def files(subpath=''):
     if not os.path.exists(abs_path):
         return render_template('files.html', error="Path not found", subpath=subpath)
     
-    if not os.path.abspath(abs_path).startswith(NAS_ROOT):
+    if not _is_inside_nas_root(abs_path):
          return render_template('files.html', error="Access Denied", subpath=subpath)
 
     files_list = []
@@ -1231,13 +1433,21 @@ def upload_file():
         return redirect(request.referrer)
         
     if file:
-        # Secure filename? Ideally yes, but internal trusted user...
-        # Let's keep original name for usability but check path traversal
-        filename = file.filename
-        
-        # Verify target path
+        # SECURITY (C5): never trust the raw client filename. secure_filename
+        # strips path separators and traversal segments ('../../evil.bin' ->
+        # 'evil.bin'), weird unicode, and control characters before the name
+        # ever touches the filesystem.
+        filename = secure_filename(file.filename)
+        if not filename:
+            flash('Invalid filename')
+            return redirect(request.referrer)
+        if len(filename) > 255:
+            stem, ext = os.path.splitext(filename)
+            filename = stem[:255 - len(ext)] + ext
+
+        # Verify target path stays inside the NAS root
         abs_path = os.path.join(NAS_ROOT, path)
-        if not os.path.abspath(abs_path).startswith(NAS_ROOT):
+        if not _is_inside_nas_root(abs_path):
              flash("Access Denied")
              return redirect(request.referrer)
              
@@ -1263,7 +1473,7 @@ def delete_file():
         return redirect(request.referrer)
         
     abs_path = os.path.join(NAS_ROOT, target_path)
-    if not os.path.abspath(abs_path).startswith(NAS_ROOT):
+    if not _is_inside_nas_root(abs_path):
          flash("Access Denied")
          return redirect(request.referrer)
          
@@ -1297,7 +1507,7 @@ def download_file():
         return "No path provided", 400
         
     abs_path = os.path.join(NAS_ROOT, path)
-    if not os.path.abspath(abs_path).startswith(NAS_ROOT):
+    if not _is_inside_nas_root(abs_path):
          return "Access Denied", 403
          
     if not os.path.exists(abs_path):
@@ -1327,7 +1537,7 @@ def stream_file():
         return "No path provided", 400
         
     abs_path = os.path.join(NAS_ROOT, path)
-    if not os.path.abspath(abs_path).startswith(NAS_ROOT):
+    if not _is_inside_nas_root(abs_path):
          return "Access Denied", 403
          
     if not os.path.exists(abs_path):
@@ -1338,12 +1548,39 @@ def stream_file():
 
 # --- Backup ---
 
-BACKUP_HISTORY = []
+# SECURITY/RELIABILITY (M5): history used to live in a module-level list that
+# vanished on restart. It is now persisted to JSON next to app.py, capped to
+# the most recent 200 entries, and writes are serialized with a lock so
+# overlapping rsync jobs cannot corrupt the file.
+BACKUP_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backup_history.json')
+_BACKUP_HISTORY_LOCK = threading.Lock()
+_BACKUP_HISTORY_LIMIT = 200
+
+def _load_backup_history():
+    try:
+        with open(BACKUP_HISTORY_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (FileNotFoundError, ValueError, OSError):
+        return []
+
+def _append_backup_history(record):
+    with _BACKUP_HISTORY_LOCK:
+        history = _load_backup_history()
+        history.append(record)
+        history = history[-_BACKUP_HISTORY_LIMIT:]
+        try:
+            tmp_path = BACKUP_HISTORY_FILE + '.tmp'
+            with open(tmp_path, 'w', encoding='utf-8') as f:
+                json.dump(history, f, indent=2)
+            os.replace(tmp_path, BACKUP_HISTORY_FILE)   # atomic swap
+        except OSError as e:
+            print(f"Warning: could not persist backup history: {e}")
 
 @app.route('/backup')
 @admin_required
 def backup():
-    return render_template('backup.html', history=reversed(BACKUP_HISTORY))
+    return render_template('backup.html', history=reversed(_load_backup_history()))
 
 @app.route('/backup/run', methods=['POST'])
 @admin_required
@@ -1364,11 +1601,11 @@ def run_backup():
     
     success, msg = run_sudo_command(cmd)
     
-    # Simple history logging
+    # Persisted history logging
     status = "Success" if success else "Failed"
     details = f"{'DRY RUN ' if dry_run else ''}Source: {source} -> Dest: {dest}. {msg[:50]}..."
     
-    BACKUP_HISTORY.append({
+    _append_backup_history({
         'time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'status': status,
         'details': details
@@ -1453,15 +1690,17 @@ def generate_command():
     })
 
 @app.route('/api/assistant/execute', methods=['POST'])
-@login_required
+@admin_required
 def execute_command():
+    # SECURITY (C1): this endpoint runs shell commands as the service user —
+    # it used to be reachable by ANY logged-in user, which made every standard
+    # account a full remote-code-execution primitive. It is now admin-only.
+
     data = request.json
     if not data or 'command' not in data:
         return jsonify({"error": "No command provided"}), 400
 
-    raw_command = data['command']
-
-    import re
+    raw_command = str(data['command'])
 
     # Parse the AI output into executable shell lines.
     extracted_commands = []
@@ -1483,7 +1722,7 @@ def execute_command():
         if 'sshd' in line and '-t' in line:
             extracted_commands.append('sudo -n mkdir -p /run/sshd')
 
-        # Accept any line that starts with a known shell token or looks like a valid command
+        # Accept only lines that start with a known, narrow shell token.
         SHELL_PREFIXES = (
             'sudo ', 'systemctl ', 'ls ', 'cat ', 'chmod ', 'chown ',
             'mkdir ', 'smbstatus ', 'smbpasswd ', 'useradd ', 'userdel ',
@@ -1492,20 +1731,35 @@ def execute_command():
             'grep ', 'echo ', 'find ', 'cp ', 'mv ', 'rm ', 'tar ',
             'apt ', 'dpkg ', 'service ', 'ip ', 'ping ', 'ss ', 'netstat ',
         )
-        first_word = line.split()[0].lower() if line.split() else ''
-        if line.startswith(SHELL_PREFIXES) or (
-            first_word and
-            not any(c.isupper() for c in first_word) and
-            re.match(r'^[a-z][a-z0-9_-]*$', first_word) and
-            len(line.split()) >= 2
-        ):
+        if line.startswith(SHELL_PREFIXES):
             extracted_commands.append(line)
 
+    # SECURITY (C1): if nothing parseable was found, REFUSE. The previous
+    # fallback ran the raw model output through shell=True, so any prose,
+    # hallucination, or injected text became an executed command.
     if not extracted_commands:
-        # Nothing parseable — run the raw text as-is
-        final_script = raw_command.strip()
-    else:
-        final_script = ' && '.join(extracted_commands)
+        return jsonify({"error": "No executable shell command found in the text. "
+                                 "Ask the assistant to output a concrete command, "
+                                 "e.g. 'sudo systemctl restart smbd'."}), 400
+
+    final_script = ' && '.join(extracted_commands)
+
+    # SECURITY: hard cap on script size.
+    if len(final_script) > 4000:
+        return jsonify({"error": "Command sequence too long."}), 400
+
+    # SECURITY: reject catastrophic operations that the assistant should never
+    # emit (devastating reformat/wipes, interactive shells via sudo, power
+    # actions — the UI already provides safer dedicated flows for power).
+    _lc = final_script.lower()
+    if (re.search(r'(^|[\s;&|])(mkfs|shred|wipefs)\b', _lc)
+            or re.search(r'\bdd\s+if=', _lc)
+            or re.search(r'(^|[\s;&|])(shutdown|reboot|halt|poweroff|init)\s', _lc)
+            or ':(){' in _lc
+            or re.search(r'(sudo\s+-[a-z]*)(su|bash|sh)\b', _lc)):
+        return jsonify({"error": "Rejected: this command sequence contains a "
+                                 "destructive operation that is not allowed "
+                                 "through the assistant."}), 400
 
     # CRITICAL: Replace plain 'sudo ' with 'sudo -n ' throughout the script.
     # Plain sudo without -n will try to open /dev/tty for a password prompt.
@@ -1536,8 +1790,8 @@ def execute_command():
             if result.returncode != 0:
                 output = (
                     f'Command exited with code {result.returncode} and produced no output.\n'
-                    f'If this is a sudo command, ensure NOPASSWD is configured in /etc/sudoers:\n'
-                    f'  vboxuser ALL=(ALL) NOPASSWD: ALL'
+                    f'If this is a sudo command, ensure the minimal NOPASSWD sudoers '
+                    f'rule from README.md ("System Setup") covers it.'
                 )
             else:
                 output = '(Command completed successfully with no output — exit code 0)'

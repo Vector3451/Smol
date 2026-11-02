@@ -40,3 +40,8 @@ ENV/
 .idea/
 *.swp
 *.swo
+
+# App runtime artifacts
+NAS/cookies.txt
+backup_history.json
+NAS/backup_history.json

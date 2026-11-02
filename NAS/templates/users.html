@@ -31,6 +31,7 @@
                         <form action="{{ url_for('delete_user') }}" method="POST"
                             onsubmit="return confirm('Permanently delete user {{ user.username }} and their home directory?');"
                             style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="username" value="{{ user.username }}">
                             <button type="submit" class="btn-danger"
                                 style="width: auto; padding: 5px 10px; font-size: 0.8rem;">Delete</button>
@@ -50,6 +51,7 @@
 <div class="card">
     <h2 class="card-title">Create New User</h2>
     <form action="{{ url_for('add_user') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 15px; align-items: end;">
             <div>
                 <label>Username</label>
