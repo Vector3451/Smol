@@ -1350,6 +1350,13 @@ def index():
 
 NAS_ROOT = '/srv/nas'
 
+def _back_to_files():
+    """Redirect back to the referring page, with a safe fallback when the
+    client sent no Referer header (_back_to_files() would otherwise
+    produce a response with no Location at all)."""
+    return redirect(request.referrer or url_for('files'))
+
+
 def _is_inside_nas_root(path):
     """
     SECURITY (C6): True only when `path` resolves strictly inside NAS_ROOT.
@@ -1423,14 +1430,14 @@ def files(subpath=''):
 def upload_file():
     if 'file' not in request.files:
         flash('No file part')
-        return redirect(request.referrer)
+        return _back_to_files()
         
     file = request.files['file']
     path = request.form.get('path', '')
     
     if file.filename == '':
         flash('No selected file')
-        return redirect(request.referrer)
+        return _back_to_files()
         
     if file:
         # SECURITY (C5): never trust the raw client filename. secure_filename
@@ -1440,7 +1447,7 @@ def upload_file():
         filename = secure_filename(file.filename)
         if not filename:
             flash('Invalid filename')
-            return redirect(request.referrer)
+            return _back_to_files()
         if len(filename) > 255:
             stem, ext = os.path.splitext(filename)
             filename = stem[:255 - len(ext)] + ext
@@ -1449,7 +1456,7 @@ def upload_file():
         abs_path = os.path.join(NAS_ROOT, path)
         if not _is_inside_nas_root(abs_path):
              flash("Access Denied")
-             return redirect(request.referrer)
+             return _back_to_files()
              
         file.save(os.path.join(abs_path, filename))
         flash(f"Uploaded {filename}")
@@ -1462,7 +1469,7 @@ def upload_file():
              details=f"Target Directory: {abs_path}"
         )
         
-    return redirect(request.referrer)
+    return _back_to_files()
 
 @app.route('/files/delete', methods=['POST'])
 @admin_required
@@ -1470,16 +1477,16 @@ def delete_file():
     target_path = request.form.get('path')
     if not target_path:
         flash("No path provided to delete.")
-        return redirect(request.referrer)
+        return _back_to_files()
         
     abs_path = os.path.join(NAS_ROOT, target_path)
     if not _is_inside_nas_root(abs_path):
          flash("Access Denied")
-         return redirect(request.referrer)
+         return _back_to_files()
          
     if not os.path.exists(abs_path):
         flash("File or folder does not exist.")
-        return redirect(request.referrer)
+        return _back_to_files()
         
     # Using sudo to bypass any internal permission boundary since Admin approved it
     cmd = ['sudo', 'rm', '-rf', abs_path]
@@ -1497,7 +1504,7 @@ def delete_file():
     else:
         flash(f"Error deleting: {msg}")
         
-    return redirect(request.referrer)
+    return _back_to_files()
 
 @app.route('/files/download')
 @login_required
@@ -1756,6 +1763,9 @@ def execute_command():
             or re.search(r'\bdd\s+if=', _lc)
             or re.search(r'(^|[\s;&|])(shutdown|reboot|halt|poweroff|init)\s', _lc)
             or ':(){' in _lc
+            # e.g. "rm -rf /", "rm -fr /*", "rm -r /" — recursive deletion at
+            # filesystem root is never a legitimate assistant task.
+            or re.search(r'(^|[\s;&|])rm\s+-[a-z]*r[a-z]*f?\s+(/-*[a-z]*\s+)*/*(\s|$)', _lc)
             or re.search(r'(sudo\s+-[a-z]*)(su|bash|sh)\b', _lc)):
         return jsonify({"error": "Rejected: this command sequence contains a "
                                  "destructive operation that is not allowed "
